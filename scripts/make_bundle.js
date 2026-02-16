@@ -7,7 +7,8 @@ const root = path.join(__dirname, "..");
 const www = path.join(root, "www");
 
 /**
- * ✅ index.html에서 직접(순서 고정) 로드하는 파일은 번들에서 제외
+ * ✅ index.html에서 순서 고정으로 직접 로드:
+ * - lib/lodash/dist/lodash.min.js   (EntryJS보다 먼저)
  * - js/ws/locales.js
  * - lib/entryjs/extern/lang/ko.js
  * - lib/entryjs/extern/util/static.js
@@ -16,8 +17,6 @@ const www = path.join(root, "www");
  * - lib/entry-paint/dist/static/js/entry-paint.js
  */
 const files = [
-  "lib/lodash/dist/lodash.min.js",
-
   "js/react18/react.production.min.js",
   "js/react18/react-dom.production.min.js",
 
