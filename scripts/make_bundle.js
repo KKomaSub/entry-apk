@@ -7,11 +7,11 @@ const root = path.join(__dirname, "..");
 const www = path.join(root, "www");
 
 /**
- * ✅ 아래 파일은 index.html에서 "순서 고정"으로 로드
+ * ✅ index.html에서 직접(순서 고정) 로드하는 파일은 번들에서 제외
  * - js/ws/locales.js
- * - lib/entry-js/extern/lang/ko.js
- * - lib/entry-js/extern/util/static.js
- * - lib/entry-js/dist/entry.min.js
+ * - lib/entryjs/extern/lang/ko.js
+ * - lib/entryjs/extern/util/static.js
+ * - lib/entryjs/dist/entry.min.js
  * - lib/entry-tool/dist/entry-tool.js
  * - lib/entry-paint/dist/static/js/entry-paint.js
  */
