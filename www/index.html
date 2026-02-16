@@ -17,24 +17,70 @@
       padding:12px;white-space:pre-wrap;overflow:auto;z-index:9999
     }
     .bad{color:#ff5c5c}
+    .dim{opacity:.8}
+    .ok{color:#66ff66}
   </style>
 
   <script>
-    window.onerror = function (m, s, l, c, e) {
+    function bootLine(t, cls="") {
       const el = document.getElementById("boot");
-      if (el) {
-        el.innerText = "JS ERROR:\n\n" + String(e && e.stack ? e.stack : m);
-        el.style.color = "#ff5c5c";
-      }
+      const d = document.createElement("div");
+      if (cls) d.className = cls;
+      d.textContent = t;
+      el.appendChild(d);
+      el.scrollTop = el.scrollHeight;
+    }
+
+    window.onerror = function (m, s, l, c, e) {
+      bootLine("JS ERROR:", "bad");
+      bootLine(String(e && e.stack ? e.stack : m), "bad");
     };
   </script>
 </head>
 <body>
   <div id="entryContainer"></div>
-  <div id="boot">Entry Offline Editor\nLoading bundle…</div>
+  <div id="boot">Entry Offline Editor\nLoading…</div>
 
+  <!-- ✅ 1) 나머지 라이브러리 번들 -->
   <script src="./bundle/vendor.bundle.js"></script>
 
+  <!-- ✅ 2) Entry 코어는 별도 로드(가장 중요) -->
+  <script src="./lib/entry-js/dist/entry.min.js"></script>
+
+  <script>
+    function showErr(title, e) {
+      bootLine(title, "bad");
+      bootLine(String(e && e.stack ? e.stack : e), "bad");
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      try {
+        bootLine("window.Entry = " + (typeof window.Entry), (window.Entry ? "ok" : "bad"));
+        bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
+                 (window.Entry && typeof window.Entry.init==="function" ? "ok" : "bad"));
+
+        if (!window.Entry || typeof window.Entry.init !== "function") {
+          throw new Error("Entry global missing: entry.min.js not executed or path invalid");
+        }
+
+        bootLine("Starting Entry.init …", "dim");
+
+        Entry.init(document.getElementById("entryContainer"), {
+          type: "workspace",
+          libDir: "./lib",
+          textCodingEnable: true
+        });
+
+        Entry.loadProject();
+        document.getElementById("boot").remove();
+
+      } catch (e) {
+        showErr("Boot Error", e);
+      }
+    });
+  </script>
+</body>
+</html>
   <script>
     function showErr(title, e) {
       const el = document.getElementById("boot");
