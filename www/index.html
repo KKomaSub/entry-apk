@@ -42,14 +42,66 @@
 
   <script src="./js/ws/locales.js"></script>
 
-  <!-- lodash (v3 expected) -->
+  <!-- lodash -->
   <script src="./lib/lodash/dist/lodash.min.js"></script>
   <script>
-    if (window._) {
+    // ✅ lodash/underscore 호환 폴리필 (EntryJS가 기대하는 API 맞추기)
+    (function () {
+      if (!window._) return;
+
+      // contains/include/includes 호환
       if (!_.contains && _.includes) _.contains = _.includes;
       if (!_.include && _.includes) _.include = _.includes;
       if (!_.includes && _.contains) _.includes = _.contains;
-    }
+
+      // where / findWhere (underscore-style)
+      if (!_.where) {
+        _.where = function (list, props) {
+          if (!list) return [];
+          var out = [];
+          for (var i = 0; i < list.length; i++) {
+            var item = list[i];
+            var ok = true;
+            for (var k in props) {
+              if (props.hasOwnProperty(k) && item[k] !== props[k]) { ok = false; break; }
+            }
+            if (ok) out.push(item);
+          }
+          return out;
+        };
+      }
+
+      if (!_.findWhere) {
+        _.findWhere = function (list, props) {
+          var arr = _.where(list, props);
+          return arr && arr.length ? arr[0] : undefined;
+        };
+      }
+
+      // pluck (underscore-style)
+      if (!_.pluck) {
+        _.pluck = function (list, key) {
+          if (!list) return [];
+          var out = new Array(list.length);
+          for (var i = 0; i < list.length; i++) out[i] = list[i] ? list[i][key] : undefined;
+          return out;
+        };
+      }
+
+      // indexBy (underscore-style)
+      if (!_.indexBy) {
+        _.indexBy = function (list, key) {
+          var out = {};
+          if (!list) return out;
+          for (var i = 0; i < list.length; i++) {
+            var item = list[i];
+            if (!item) continue;
+            out[item[key]] = item;
+          }
+          return out;
+        };
+      }
+    })();
   </script>
 
   <!-- jQuery -->
@@ -60,8 +112,6 @@
   <script src="./lib/entryjs/extern/lang/ko.js"></script>
   <script src="./lib/entryjs/extern/util/static.js"></script>
   <script src="./lib/entryjs/extern/util/handle.js"></script>
-
-  <!-- ✅ BigNumber 전역 (Entry.init 전에 반드시 필요) -->
   <script src="./lib/entryjs/extern/util/bignumber.min.js"></script>
 
   <!-- Entry core -->
@@ -84,6 +134,7 @@
       try {
         bootLine("_ (lodash) = " + (typeof window._), window._ ? "ok" : "bad");
         bootLine("_.contains = " + (window._ ? typeof _.contains : "N/A"), (window._ && typeof _.contains==="function") ? "ok" : "bad");
+        bootLine("_.findWhere = " + (window._ ? typeof _.findWhere : "N/A"), (window._ && typeof _.findWhere==="function") ? "ok" : "bad");
         bootLine("$ (jQuery) = " + (typeof window.$), window.$ ? "ok" : "bad");
         bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
         bootLine("EaselHandle = " + (typeof window.EaselHandle), window.EaselHandle ? "ok" : "bad");
@@ -93,11 +144,11 @@
           (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
 
         if (!window._) throw new Error("lodash missing");
-        if (typeof _.contains !== "function") throw new Error("lodash mismatch");
+        if (typeof _.findWhere !== "function") throw new Error("underscore compatibility missing: _.findWhere");
         if (!window.$) throw new Error("jQuery missing");
         if (!window.Lang) throw new Error("Lang missing");
         if (!window.EaselHandle) throw new Error("EaselHandle missing");
-        if (!window.BigNumber) throw new Error("BigNumber missing: load ./lib/entryjs/extern/util/bignumber.min.js before entry.min.js");
+        if (!window.BigNumber) throw new Error("BigNumber missing");
         if (!window.Entry || typeof window.Entry.init !== "function") throw new Error("Entry.init missing");
 
         bootLine("Starting Entry.init …", "dim");
