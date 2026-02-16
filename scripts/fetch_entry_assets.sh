@@ -77,16 +77,14 @@ fetch_try "$LIB/lodash/dist/lodash.min.js" \
   "$P2/lib/lodash/dist/lodash.min.js"
 
 # ---------------------------
-# ✅ locales.js (필수) — 경로가 자주 바뀜
-# 문서: path/to/js/ws/locales.js  3
-# ---------------------------
+# locales.js (필수) — 저장 경로는 문서대로 www/js/ws/locales.js
 fetch_try "$JS/ws/locales.js" \
   "$P1/js/ws/locales.js" \
   "$P2/js/ws/locales.js" \
   "$P1/lib/js/ws/locales.js" \
   "$P2/lib/js/ws/locales.js" \
-  "$GH_RAW/entrylabs/entryjs/develop/example/js/ws/locales.js" \
-  "$GH_RAW/entrylabs/entryjs/master/example/js/ws/locales.js"
+  "https://raw.githubusercontent.com/entrylabs/entryjs/develop/example/js/ws/locales.js" \
+  "https://raw.githubusercontent.com/entrylabs/entryjs/master/example/js/ws/locales.js"
 
 # ---------------------------
 # react18 (필수)
