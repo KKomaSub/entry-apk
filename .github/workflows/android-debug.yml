@@ -22,7 +22,6 @@ jobs:
         run: |
           npm install --legacy-peer-deps
 
-      # ✅ 아이콘 원본을 레포에 안 올렸다면 여기서 URL로 받아도 됨
       - name: Ensure icon source (assets/icon.png)
         run: |
           mkdir -p assets
@@ -32,9 +31,49 @@ jobs:
           fi
           ls -al assets/icon.png
 
+      - name: Fetch Entry assets (offline vendoring)
+        run: |
+          bash scripts/fetch_entry_assets.sh
+
+      - name: Make JS bundle
+        run: |
+          npm run bundle
+
+      # ✅ 아이콘/스플래시 생성은 cap sync 직전에 (가장 안전)
       - name: Generate Android icons/splash
         run: |
-          npm run assets
+          npx @capacitor/assets generate --android
+
+      - name: Setup Java (17)
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Capacitor CLI
+        run: |
+          npm i -g @capacitor/cli
+
+      - name: Add Android platform (if missing) and sync
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+          npx cap sync android
+
+      - name: Build Debug APK
+        run: |
+          cd android
+          ./gradlew assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EntryOffline-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk          npm run assets
 
       - name: Fetch Entry assets (offline vendoring)
         run: |
