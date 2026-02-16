@@ -42,10 +42,9 @@
 
   <script src="./js/ws/locales.js"></script>
 
-  <!-- lodash (v3.10.1 expected) -->
+  <!-- lodash (v3 expected) -->
   <script src="./lib/lodash/dist/lodash.min.js"></script>
   <script>
-    // ✅ 안전 폴리필: v4/v3 혼용 방지
     if (window._) {
       if (!_.contains && _.includes) _.contains = _.includes;
       if (!_.include && _.includes) _.include = _.includes;
@@ -61,6 +60,9 @@
   <script src="./lib/entryjs/extern/lang/ko.js"></script>
   <script src="./lib/entryjs/extern/util/static.js"></script>
   <script src="./lib/entryjs/extern/util/handle.js"></script>
+
+  <!-- ✅ BigNumber 전역 (Entry.init 전에 반드시 필요) -->
+  <script src="./lib/entryjs/extern/util/bignumber.min.js"></script>
 
   <!-- Entry core -->
   <script src="./lib/entryjs/dist/entry.min.js"></script>
@@ -85,15 +87,17 @@
         bootLine("$ (jQuery) = " + (typeof window.$), window.$ ? "ok" : "bad");
         bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
         bootLine("EaselHandle = " + (typeof window.EaselHandle), window.EaselHandle ? "ok" : "bad");
+        bootLine("BigNumber = " + (typeof window.BigNumber), window.BigNumber ? "ok" : "bad");
         bootLine("Entry = " + (typeof window.Entry), window.Entry ? "ok" : "bad");
         bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
           (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
 
         if (!window._) throw new Error("lodash missing");
-        if (typeof _.contains !== "function") throw new Error("lodash version mismatch: _.contains missing");
+        if (typeof _.contains !== "function") throw new Error("lodash mismatch");
         if (!window.$) throw new Error("jQuery missing");
         if (!window.Lang) throw new Error("Lang missing");
         if (!window.EaselHandle) throw new Error("EaselHandle missing");
+        if (!window.BigNumber) throw new Error("BigNumber missing: load ./lib/entryjs/extern/util/bignumber.min.js before entry.min.js");
         if (!window.Entry || typeof window.Entry.init !== "function") throw new Error("Entry.init missing");
 
         bootLine("Starting Entry.init …", "dim");
