@@ -8,25 +8,40 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
+
+      - name: Debug repo structure
+        run: |
+          pwd
+          ls -al
+          ls -al scripts || true
+          ls -al www || true
+          cat package.json
 
       - name: Install deps
         run: npm install
 
+      - name: Make fetch script executable
+        run: chmod +x scripts/fetch_entry_assets.sh
+
       - name: Fetch Entry assets (bundle into APK)
         run: npm run fetch
 
-      - uses: actions/setup-java@v4
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Add & Sync Android
+      - name: Add & Sync Android (Capacitor)
         run: |
           npx cap add android || true
           npx cap sync android
