@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Entry Offline Editor (APK)</title>
+
+  <link href="./lib/entry-tool/dist/entry-tool.css" rel="stylesheet" />
+  <link href="./lib/entry-js/dist/entry.css" rel="stylesheet" />
+
+  <script src="./lib/entry-js/extern/lang/ko.js"></script>
+
+  <!-- extern/static + entry-tool + entry-paint 등은 아래 스크립트로 채워집니다 -->
+  <script src="./lib/entry-js/extern/util/static.js"></script>
+  <script src="./lib/entry-tool/dist/entry-tool.js"></script>
+  <script src="./lib/entry-paint/dist/static/js/entry-paint.js"></script>
+
+  <!-- 필수: entry.min.js -->
+  <script src="./lib/entry-js/dist/entry.min.js"></script>
+
+  <style>
+    html,body{margin:0;height:100%}
+    #entryContainer{height:100vh}
+  </style>
+</head>
+<body>
+  <div id="entryContainer"></div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      var initOption = { type: "workspace", textCodingEnable: true };
+      Entry.creationChangedEvent = new Entry.Event(window);
+      Entry.init(document.getElementById("entryContainer"), initOption);
+      Entry.loadProject(); // 빈 프로젝트 로드
+    });
+  </script>
+</body>
+</html>
