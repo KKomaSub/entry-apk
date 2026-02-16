@@ -40,16 +40,30 @@
   <div id="entryContainer"></div>
   <div id="boot">Entry Offline Editor\nLoading…</div>
 
-  <!-- ✅ 0) Lang 전역을 만드는 locales.js를 가장 먼저 -->
+  <!-- ✅ 0) Lang 전역 -->
   <script src="./js/ws/locales.js"></script>
 
-  <!-- ✅ 1) 써드파티/entry-tool 등 (Lang이 있어야 안전) -->
-  <script src="./bundle/vendor.bundle.js"></script>
-
-  <!-- ✅ 2) Entry 필수 순서 -->
+  <!-- ✅ 1) EntryStatic/Legacy 등 전역 준비: ko -> static -> (legacy placeholders) -->
   <script src="./lib/entry-js/extern/lang/ko.js"></script>
   <script src="./lib/entry-js/extern/util/static.js"></script>
+
+  <!-- ✅ 1-1) 일부 배포본에서 기대하는 레거시 전역(없으면 ReferenceError) 방지 -->
+  <script>
+    // EntryStatic은 static.js가 보통 만들지만, 만약 CDN 파일 변동/누락이면 최소 객체라도 만들어서 크래시 방지
+    window.EntryStatic = window.EntryStatic || {};
+    // EntryVideoLegacy는 일부 entry.min.js 번들이 참조(모듈 분리/변동 대비)
+    window.EntryVideoLegacy = window.EntryVideoLegacy || {};
+  </script>
+
+  <!-- ✅ 2) Entry 코어 -->
   <script src="./lib/entry-js/dist/entry.min.js"></script>
+
+  <!-- ✅ 3) 나머지 라이브러리 번들 (Entry 전역 의존 없는 것들만 포함하도록 make_bundle.js 수정) -->
+  <script src="./bundle/vendor.bundle.js"></script>
+
+  <!-- ✅ 4) Entry 전역에 의존하는 것들은 Entry 이후에 별도 로드 -->
+  <script src="./lib/entry-tool/dist/entry-tool.js"></script>
+  <script src="./lib/entry-paint/dist/static/js/entry-paint.js"></script>
 
   <script>
     function showErr(title, e) {
@@ -59,14 +73,16 @@
 
     document.addEventListener("DOMContentLoaded", () => {
       try {
-        bootLine("Lang = " + (typeof window.Lang), (window.Lang ? "ok" : "bad"));
-        bootLine("Entry = " + (typeof window.Entry), (window.Entry ? "ok" : "bad"));
+        bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
+        bootLine("EntryStatic = " + (typeof window.EntryStatic), window.EntryStatic ? "ok" : "bad");
+        bootLine("EntryVideoLegacy = " + (typeof window.EntryVideoLegacy), window.EntryVideoLegacy ? "ok" : "bad");
+        bootLine("Entry = " + (typeof window.Entry), window.Entry ? "ok" : "bad");
         bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
-          (window.Entry && typeof window.Entry.init === "function" ? "ok" : "bad"));
+          (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
 
         if (!window.Lang) throw new Error("Lang missing: locales.js not loaded");
         if (!window.Entry || typeof window.Entry.init !== "function") {
-          throw new Error("Entry.init missing: check ko.js/static.js/entry.min.js order");
+          throw new Error("Entry.init missing: Entry bundle mismatch or missing required globals");
         }
 
         bootLine("Starting Entry.init …", "dim");
