@@ -50,7 +50,7 @@ jobs:
       - name: Build entry-offline renderer
         working-directory: _entry-offline
         run: |
-          npm ci || npm install
+          npm install
 
           # 레포 버전에 따라 스크립트명이 달라질 수 있어 후보를 순차 시도
           npm run build:renderer || npm run build-renderer || npm run build || true
