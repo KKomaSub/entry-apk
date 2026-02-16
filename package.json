@@ -1,21 +1,20 @@
 {
   "name": "entry-apk",
-  "private": true,
   "version": "1.0.0",
-  "type": "module",
-  "description": "Entry Offline Editor APK (Capacitor + bundled EntryJS)",
+  "private": true,
+  "description": "Entry Offline Workspace packaged as Android APK (Capacitor)",
   "scripts": {
     "fetch": "bash scripts/fetch_entry_assets.sh",
-    "cap:add": "npx cap add android",
+    "bundle": "node scripts/make_bundle.js",
     "cap:sync": "npx cap sync android",
-    "build:android": "cd android && ./gradlew assembleDebug"
+    "apk:debug": "cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
-    "@capacitor/android": "^6.0.0",
-    "@capacitor/core": "^6.0.0"
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/core": "^6.1.2"
   },
   "devDependencies": {
-    "@capacitor/cli": "^6.0.0",
-    "@capacitor/assets": "^1.0.0"
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
   }
 }
