@@ -43,10 +43,14 @@
   <!-- ✅ 0) Lang 전역 -->
   <script src="./js/ws/locales.js"></script>
 
-  <!-- ✅ 0-1) lodash 전역 '_' 는 EntryJS보다 먼저! -->
+  <!-- ✅ 0-1) lodash '_' 는 EntryJS보다 먼저 -->
   <script src="./lib/lodash/dist/lodash.min.js"></script>
 
-  <!-- ✅ 1) EntryJS 필수 순서: ko -> static -> entry.min.js -->
+  <!-- ✅ 0-2) jQuery '$' 도 EntryJS보다 먼저 -->
+  <script src="./lib/jquery/jquery.min.js"></script>
+  <script src="./lib/jquery-ui/ui/minified/jquery-ui.min.js"></script>
+
+  <!-- ✅ 1) EntryJS 필수 순서 -->
   <script src="./lib/entryjs/extern/lang/ko.js"></script>
   <script src="./lib/entryjs/extern/util/static.js"></script>
   <script src="./lib/entryjs/dist/entry.min.js"></script>
@@ -67,13 +71,15 @@
     document.addEventListener("DOMContentLoaded", () => {
       try {
         bootLine("_ (lodash) = " + (typeof window._), window._ ? "ok" : "bad");
+        bootLine("$ (jQuery) = " + (typeof window.$), window.$ ? "ok" : "bad");
         bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
         bootLine("Entry = " + (typeof window.Entry), window.Entry ? "ok" : "bad");
         bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
           (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
 
-        if (!window._) throw new Error("lodash '_' missing: lodash must load before entry.min.js");
-        if (!window.Lang) throw new Error("Lang missing: locales.js not loaded");
+        if (!window._) throw new Error("lodash '_' missing");
+        if (!window.$) throw new Error("jQuery '$' missing");
+        if (!window.Lang) throw new Error("Lang missing");
         if (!window.Entry || typeof window.Entry.init !== "function") {
           throw new Error("Entry.init missing: entry.min.js crashed earlier (check JS ERROR above)");
         }
