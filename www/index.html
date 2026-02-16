@@ -13,7 +13,7 @@
     #boot small { opacity: .8; }
   </style>
 
-  <!-- ✅ 에러를 "흰 화면" 대신 화면에 표시 -->
+  <!-- ✅ 흰 화면 대신 에러를 화면에 표시 -->
   <script>
     function showErr(title, err) {
       document.body.style.margin = "0";
@@ -32,15 +32,21 @@
   <link rel="stylesheet" href="./lib/entry-tool/dist/entry-tool.css" />
   <link rel="stylesheet" href="./lib/entry-js/dist/entry.css" />
 
-  <!-- Entry extern (최소) -->
+  <!-- ✅ EntryJS 의존성(문서에 명시된 필수 선로딩) -->
+  <script src="./lib/lodash/dist/lodash.min.js"></script>
+  <script src="./lib/js/ws/locales.js"></script>
+  <script src="./lib/js/react18/react.production.min.js"></script>
+  <script src="./lib/js/react18/react-dom.production.min.js"></script>
+
+  <!-- Entry extern -->
   <script src="./lib/entry-js/extern/lang/ko.js"></script>
   <script src="./lib/entry-js/extern/util/static.js"></script>
 
-  <!-- Entry tool / paint -->
+  <!-- tool / paint -->
   <script src="./lib/entry-tool/dist/entry-tool.js"></script>
   <script src="./lib/entry-paint/dist/static/js/entry-paint.js"></script>
 
-  <!-- EntryJS core -->
+  <!-- core last -->
   <script src="./lib/entry-js/dist/entry.min.js"></script>
 </head>
 
@@ -51,16 +57,22 @@
       <small>Loading assets…</small>
     </div>
   </div>
+
   <div id="entryContainer"></div>
 
   <script>
     document.addEventListener("DOMContentLoaded", function () {
       try {
-        if (!window.Entry) throw new Error("Entry is not defined (entry.min.js 로딩 실패)");
+        if (!window.Entry) throw new Error("Entry is not defined (entry.min.js 로딩 실패/누락)");
+        if (typeof Entry.init !== "function") {
+          throw new Error("Entry.init is not a function (의존 라이브러리 누락 또는 잘못된 번들)");
+        }
+
         var initOption = { type: "workspace", textCodingEnable: true };
         Entry.creationChangedEvent = new Entry.Event(window);
         Entry.init(document.getElementById("entryContainer"), initOption);
-        Entry.loadProject(); // 빈 프로젝트
+        Entry.loadProject(); // 빈 프로젝트 로드
+
         document.getElementById("boot").remove();
       } catch (e) {
         showErr("Boot Error", e);
@@ -68,5 +80,4 @@
     });
   </script>
 </body>
-</html></body>
 </html>
