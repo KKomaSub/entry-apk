@@ -2,5 +2,17 @@
   "appId": "com.kkoma.entryoffline",
   "appName": "엔트리 오프라인",
   "webDir": "www",
-  "bundledWebRuntime": false
+  "bundledWebRuntime": false,
+  "android": {
+    "allowMixedContent": true
+  },
+  "server": {
+    "allowNavigation": [
+      "playentry.org",
+      "*.playentry.org",
+      "entry-cdn.pstatic.net",
+      "*.pstatic.net",
+      "raw.githubusercontent.com"
+    ]
+  }
 }
