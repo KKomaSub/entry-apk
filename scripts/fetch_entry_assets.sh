@@ -70,7 +70,7 @@ echo "WWW=$WWW"
 echo "MAX_JOBS=$MAX_JOBS"
 echo ""
 
-# ✅ EntryJS (workspace) — 반드시 entryjs 경로!
+# ✅ EntryJS (workspace)
 run_bg "$LIB/entryjs/dist/entry.min.js" \
   "$P1/lib/entryjs/dist/entry.min.js" \
   "$P2/lib/entryjs/dist/entry.min.js"
@@ -87,6 +87,10 @@ run_bg "$LIB/entryjs/extern/util/static.js" \
   "$P1/lib/entryjs/extern/util/static.js" \
   "$P2/lib/entryjs/extern/util/static.js"
 
+run_bg "$LIB/entryjs/extern/util/handle.js" \
+  "$P1/lib/entryjs/extern/util/handle.js" \
+  "$P2/lib/entryjs/extern/util/handle.js"
+
 # (권장) extern util들
 run_bg "$LIB/entryjs/extern/util/filbert.js" \
   "$P1/lib/entryjs/extern/util/filbert.js" \
@@ -100,9 +104,122 @@ run_bg "$LIB/entryjs/extern/util/ndgmr.Collision.js" \
   "$P1/lib/entryjs/extern/util/ndgmr.Collision.js" \
   "$P2/lib/entryjs/extern/util/ndgmr.Collision.js"
 
-run_bg "$LIB/entryjs/extern/util/handle.js" \
-  "$P1/lib/entryjs/extern/util/handle.js" \
-  "$P2/lib/entryjs/extern/util/handle.js"
+run_bg "$LIB/entryjs/extern/util/bignumber.min.js" \
+  "$P1/lib/entryjs/extern/util/bignumber.min.js" \
+  "$P2/lib/entryjs/extern/util/bignumber.min.js"
+
+# Entry tool/paint
+run_bg "$LIB/entry-tool/dist/entry-tool.js" \
+  "$P1/lib/entry-tool/dist/entry-tool.js" \
+  "$P2/lib/entry-tool/dist/entry-tool.js"
+
+run_bg "$LIB/entry-tool/dist/entry-tool.css" \
+  "$P1/lib/entry-tool/dist/entry-tool.css" \
+  "$P2/lib/entry-tool/dist/entry-tool.css"
+
+run_bg "$LIB/entry-paint/dist/static/js/entry-paint.js" \
+  "$P1/lib/entry-paint/dist/static/js/entry-paint.js" \
+  "$P2/lib/entry-paint/dist/static/js/entry-paint.js"
+
+# ✅ lodash는 EntryJS가 기대하는 v3로 고정 (contains 지원)
+run_bg "$LIB/lodash/dist/lodash.min.js" \
+  "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/3.10.1/lodash.min.js"
+
+# jQuery
+run_bg "$LIB/jquery/jquery.min.js" \
+  "$P1/lib/jquery/jquery.min.js" \
+  "$P2/lib/jquery/jquery.min.js"
+
+run_bg "$LIB/jquery-ui/ui/minified/jquery-ui.min.js" \
+  "$P1/lib/jquery-ui/ui/minified/jquery-ui.min.js" \
+  "$P2/lib/jquery-ui/ui/minified/jquery-ui.min.js"
+
+run_bg "$LIB/velocity/velocity.min.js" \
+  "$P1/lib/velocity/velocity.min.js" \
+  "$P2/lib/velocity/velocity.min.js"
+
+# CreateJS
+run_bg "$LIB/PreloadJS/lib/preloadjs-0.6.0.min.js" \
+  "$P1/lib/PreloadJS/lib/preloadjs-0.6.0.min.js" \
+  "$P2/lib/PreloadJS/lib/preloadjs-0.6.0.min.js"
+
+run_bg "$LIB/EaselJS/lib/easeljs-0.8.0.min.js" \
+  "$P1/lib/EaselJS/lib/easeljs-0.8.0.min.js" \
+  "$P2/lib/EaselJS/lib/easeljs-0.8.0.min.js"
+
+run_bg "$LIB/SoundJS/lib/soundjs-0.6.0.min.js" \
+  "$P1/lib/SoundJS/lib/soundjs-0.6.0.min.js" \
+  "$P2/lib/SoundJS/lib/soundjs-0.6.0.min.js"
+
+run_bg "$LIB/SoundJS/lib/flashaudioplugin-0.6.0.min.js" \
+  "$P1/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js" \
+  "$P2/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js"
+
+# CodeMirror / fuzzy
+run_bg "$LIB/codemirror/lib/codemirror.js" \
+  "$P1/lib/codemirror/lib/codemirror.js" \
+  "$P2/lib/codemirror/lib/codemirror.js"
+
+run_bg "$LIB/fuzzy/lib/fuzzy.js" \
+  "$P1/lib/fuzzy/lib/fuzzy.js" \
+  "$P2/lib/fuzzy/lib/fuzzy.js"
+
+# socket.io-client
+run_bg "$LIB/socket.io-client/socket.io.js" \
+  "$P1/lib/socket.io-client/socket.io.js" \
+  "$P2/lib/socket.io-client/socket.io.js"
+
+# ws files
+mkdir -p "$JS/ws"
+run_bg "$JS/ws/locales.js" \
+  "$GH_RAW/entrylabs/entryjs/$ENTRYJS_REF/example/js/ws/locales.js" \
+  "$GH_RAW/entrylabs/entryjs/master/example/js/ws/locales.js" \
+  "$P1/js/ws/locales.js" \
+  "$P2/js/ws/locales.js" \
+  "$P1/lib/js/ws/locales.js" \
+  "$P2/lib/js/ws/locales.js"
+
+run_bg "$JS/ws/jshint.js" \
+  "$P1/js/ws/jshint.js" \
+  "$P2/js/ws/jshint.js" \
+  "$P1/lib/js/ws/jshint.js" \
+  "$P2/lib/js/ws/jshint.js"
+
+run_bg "$JS/ws/python.js" \
+  "$P1/js/ws/python.js" \
+  "$P2/js/ws/python.js" \
+  "$P1/lib/js/ws/python.js" \
+  "$P2/lib/js/ws/python.js"
+
+wait_all
+
+# React 18 (npm)
+echo "=== Vendor React 18 from npm (stable) ==="
+npm install --no-audit --no-fund --silent react@18.2.0 react-dom@18.2.0 || true
+mkdir -p "$JS/react18"
+
+if [ -f "$ROOT/node_modules/react/umd/react.production.min.js" ]; then
+  cp -f "$ROOT/node_modules/react/umd/react.production.min.js" "$JS/react18/react.production.min.js"
+else
+  echo "$JS/react18/react.production.min.js" >> "$FAIL_LOG"
+fi
+
+if [ -f "$ROOT/node_modules/react-dom/umd/react-dom.production.min.js" ]; then
+  cp -f "$ROOT/node_modules/react-dom/umd/react-dom.production.min.js" "$JS/react18/react-dom.production.min.js"
+else
+  echo "$JS/react18/react-dom.production.min.js" >> "$FAIL_LOG"
+fi
+
+if [ -s "$FAIL_LOG" ]; then
+  COUNT="$(sort -u "$FAIL_LOG" | wc -l | tr -d ' ')"
+  log_big "FETCH SUMMARY: $COUNT file(s) missing"
+  sort -u "$FAIL_LOG" | sed 's/^/ - /'
+  echo ""
+else
+  echo "✅ FETCH SUMMARY: all downloads OK"
+fi
+
+exit 0  "$P2/lib/entryjs/extern/util/handle.js"
 
 run_bg "$LIB/entryjs/extern/util/bignumber.min.js" \
   "$P1/lib/entryjs/extern/util/bignumber.min.js" \
