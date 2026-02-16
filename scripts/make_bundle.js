@@ -4,6 +4,8 @@ const path = require("path");
 const root = path.join(__dirname, "..");
 const www = path.join(root, "www");
 
+// ✅ entry.min.js는 여기서 제외합니다.
+//    (index.html에서 별도 로드하므로 중복/꼬임 방지)
 const files = [
   "lib/lodash/dist/lodash.min.js",
 
@@ -35,6 +37,32 @@ const files = [
   "lib/entry-js/extern/util/bignumber.min.js",
 
   "lib/entry-js/extern/util/static.js",
+  "lib/entry-tool/dist/entry-tool.js",
+  "lib/entry-paint/dist/static/js/entry-paint.js"
+];
+
+let out = "";
+let missing = [];
+
+for (const f of files) {
+  const p = path.join(www, f);
+  if (!fs.existsSync(p)) {
+    missing.push(f);
+    out += `\n/* MISSING: ${f} */\n`;
+    continue;
+  }
+  out += `\n/* ===== ${f} ===== */\n`;
+  out += fs.readFileSync(p, "utf8") + "\n";
+}
+
+fs.mkdirSync(path.join(www, "bundle"), { recursive: true });
+fs.writeFileSync(path.join(www, "bundle", "vendor.bundle.js"), out, "utf8");
+
+console.log("OK -> www/bundle/vendor.bundle.js");
+if (missing.length) {
+  console.log("WARNING missing files:");
+  for (const m of missing) console.log(" - " + m);
+}  "lib/entry-js/extern/util/static.js",
   "lib/entry-tool/dist/entry-tool.js",
   "lib/entry-paint/dist/static/js/entry-paint.js",
 
