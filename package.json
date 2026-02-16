@@ -3,9 +3,12 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "description": "Entry Offline Editor APK (Capacitor + bundled EntryJS)",
   "scripts": {
-    "cap:add": "cap add android",
-    "cap:sync": "cap sync android"
+    "fetch": "bash scripts/fetch_entry_assets.sh",
+    "cap:add": "npx cap add android",
+    "cap:sync": "npx cap sync android",
+    "build:android": "cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
     "@capacitor/android": "^6.0.0",
