@@ -1,14 +1,18 @@
+"use strict";
+
 const fs = require("fs");
 const path = require("path");
 
 const root = path.join(__dirname, "..");
 const www = path.join(root, "www");
 
-// ✅ 아래 파일들은 index.html에서 “순서 고정”으로 로드하므로 번들에서 제외
-// - js/ws/locales.js  (Lang 전역 생성)
-// - lib/entry-js/extern/lang/ko.js
-// - lib/entry-js/extern/util/static.js
-// - lib/entry-js/dist/entry.min.js
+/**
+ * ✅ index.html에서 순서 고정으로 로드하는 파일(번들 제외)
+ * - js/ws/locales.js (Lang 전역 생성)
+ * - lib/entry-js/extern/lang/ko.js
+ * - lib/entry-js/extern/util/static.js
+ * - lib/entry-js/dist/entry.min.js
+ */
 const files = [
   "lib/lodash/dist/lodash.min.js",
 
@@ -41,61 +45,24 @@ const missing = [];
 
 for (const f of files) {
   const p = path.join(www, f);
+
   if (!fs.existsSync(p)) {
     missing.push(f);
     out += `\n/* MISSING: ${f} */\n`;
     continue;
   }
+
   out += `\n/* ===== ${f} ===== */\n`;
   out += fs.readFileSync(p, "utf8") + "\n";
 }
 
-fs.mkdirSync(path.join(www, "bundle"), { recursive: true });
-fs.writeFileSync(path.join(www, "bundle", "vendor.bundle.js"), out, "utf8");
+const bundleDir = path.join(www, "bundle");
+fs.mkdirSync(bundleDir, { recursive: true });
 
-console.log("OK -> www/bundle/vendor.bundle.js");
-if (missing.length) {
-  console.log("WARNING: missing files (bundle still generated):");
-  for (const m of missing) console.log(" - " + m);
-}const missing = [];
+const bundlePath = path.join(bundleDir, "vendor.bundle.js");
+fs.writeFileSync(bundlePath, out, "utf8");
 
-for (const f of files) {
-  const p = path.join(www, f);
-  if (!fs.existsSync(p)) {
-    missing.push(f);
-    out += `\n/* MISSING: ${f} */\n`;
-    continue;
-  }
-  out += `\n/* ===== ${f} ===== */\n`;
-  out += fs.readFileSync(p, "utf8") + "\n";
-}
-
-fs.mkdirSync(path.join(www, "bundle"), { recursive: true });
-fs.writeFileSync(path.join(www, "bundle", "vendor.bundle.js"), out, "utf8");
-
-console.log("OK -> www/bundle/vendor.bundle.js");
-if (missing.length) {
-  console.log("WARNING: missing files (bundle still generated):");
-  for (const m of missing) console.log(" - " + m);
-}
-let out = "";
-const missing = [];
-
-for (const f of files) {
-  const p = path.join(www, f);
-  if (!fs.existsSync(p)) {
-    missing.push(f);
-    out += `\n/* MISSING: ${f} */\n`;
-    continue;
-  }
-  out += `\n/* ===== ${f} ===== */\n`;
-  out += fs.readFileSync(p, "utf8") + "\n";
-}
-
-fs.mkdirSync(path.join(www, "bundle"), { recursive: true });
-fs.writeFileSync(path.join(www, "bundle", "vendor.bundle.js"), out, "utf8");
-
-console.log("OK -> www/bundle/vendor.bundle.js");
+console.log("OK -> " + bundlePath);
 
 if (missing.length) {
   console.log("WARNING: missing files (bundle still generated):");
