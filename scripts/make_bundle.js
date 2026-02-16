@@ -4,7 +4,11 @@ const path = require("path");
 const root = path.join(__dirname, "..");
 const www = path.join(root, "www");
 
-// ✅ entry.min.js / static.js / ko.js 는 index.html에서 “순서 고정”으로 로드
+// ✅ 아래 파일들은 index.html에서 “순서 고정”으로 로드하므로 번들에서 제외
+// - js/ws/locales.js  (Lang 전역 생성)
+// - lib/entry-js/extern/lang/ko.js
+// - lib/entry-js/extern/util/static.js
+// - lib/entry-js/dist/entry.min.js
 const files = [
   "lib/lodash/dist/lodash.min.js",
 
@@ -23,7 +27,6 @@ const files = [
   "lib/codemirror/lib/codemirror.js",
   "lib/fuzzy/lib/fuzzy.js",
 
-  "js/ws/locales.js",
   "js/ws/jshint.js",
   "js/ws/python.js",
 
@@ -35,6 +38,26 @@ const files = [
 
 let out = "";
 const missing = [];
+
+for (const f of files) {
+  const p = path.join(www, f);
+  if (!fs.existsSync(p)) {
+    missing.push(f);
+    out += `\n/* MISSING: ${f} */\n`;
+    continue;
+  }
+  out += `\n/* ===== ${f} ===== */\n`;
+  out += fs.readFileSync(p, "utf8") + "\n";
+}
+
+fs.mkdirSync(path.join(www, "bundle"), { recursive: true });
+fs.writeFileSync(path.join(www, "bundle", "vendor.bundle.js"), out, "utf8");
+
+console.log("OK -> www/bundle/vendor.bundle.js");
+if (missing.length) {
+  console.log("WARNING: missing files (bundle still generated):");
+  for (const m of missing) console.log(" - " + m);
+}const missing = [];
 
 for (const f of files) {
   const p = path.join(www, f);
