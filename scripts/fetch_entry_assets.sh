@@ -741,9 +741,7 @@ fetch "https://playentry.org/lib/entry-paint/dist/static/js/entry-paint.js" \
 fetch "https://playentry.org/lib/lodash/dist/lodash.min.js" \
       "$WWW/lib/lodash/dist/lodash.min.js"
 
-# locales는 경로가 자주 바뀜 → 2곳 시도
-fetch "https://playentry.org/lib/js/ws/locales.js" \
-      "$WWW/lib/js/ws/locales.js"
+
 
 fetch "https://entry-cdn.pstatic.net/js/ws/locales.js" \
       "$WWW/lib/js/ws/locales.js"
