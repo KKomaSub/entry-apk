@@ -4,8 +4,7 @@ const path = require("path");
 const root = path.join(__dirname, "..");
 const www = path.join(root, "www");
 
-// ✅ entry.min.js는 번들에 포함하지 않습니다.
-//    (index.html에서 별도 로드)
+// ✅ entry.min.js / static.js / ko.js 는 index.html에서 “순서 고정”으로 로드
 const files = [
   "lib/lodash/dist/lodash.min.js",
 
@@ -30,11 +29,32 @@ const files = [
 
   "lib/socket.io-client/socket.io.js",
 
-  "lib/entry-js/extern/util/static.js",
   "lib/entry-tool/dist/entry-tool.js",
   "lib/entry-paint/dist/static/js/entry-paint.js"
 ];
 
+let out = "";
+const missing = [];
+
+for (const f of files) {
+  const p = path.join(www, f);
+  if (!fs.existsSync(p)) {
+    missing.push(f);
+    out += `\n/* MISSING: ${f} */\n`;
+    continue;
+  }
+  out += `\n/* ===== ${f} ===== */\n`;
+  out += fs.readFileSync(p, "utf8") + "\n";
+}
+
+fs.mkdirSync(path.join(www, "bundle"), { recursive: true });
+fs.writeFileSync(path.join(www, "bundle", "vendor.bundle.js"), out, "utf8");
+
+console.log("OK -> www/bundle/vendor.bundle.js");
+if (missing.length) {
+  console.log("WARNING: missing files (bundle still generated):");
+  for (const m of missing) console.log(" - " + m);
+}
 let out = "";
 const missing = [];
 
