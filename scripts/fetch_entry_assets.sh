@@ -4,21 +4,61 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WWW="$ROOT/www"
 
-mkdir -p "$WWW/lib/entry-js/dist" "$WWW/lib/entry-js/extern/lang" "$WWW/lib/entry-js/extern/util"
-mkdir -p "$WWW/lib/entry-tool/dist"
-mkdir -p "$WWW/lib/entry-paint/dist/static/js"
+mkdir -p "$WWW/lib"
 
-# 1) EntryJS/EntryTool/EntryPaint는 playentry CDN에도 배포됨(문서에 언급) 5
-#    가장 단순하게는 playentry의 lib 경로에서 가져오면 됨.
-curl -L --retry 5 -o "$WWW/lib/entry-js/dist/entry.min.js" "https://playentry.org/lib/entry-js/dist/entry.min.js"
-curl -L --retry 5 -o "$WWW/lib/entry-js/dist/entry.css" "https://playentry.org/lib/entry-js/dist/entry.css"
+# ---- helpers ----
+fetch () {
+  local url="$1"
+  local out="$2"
+  mkdir -p "$(dirname "$out")"
+  echo "GET  $url"
+  curl -L --retry 5 --retry-delay 2 --fail -o "$out" "$url"
+}
 
-curl -L --retry 5 -o "$WWW/lib/entry-js/extern/lang/ko.js" "https://playentry.org/lib/entry-js/extern/lang/ko.js"
-curl -L --retry 5 -o "$WWW/lib/entry-js/extern/util/static.js" "https://playentry.org/lib/entry-js/extern/util/static.js"
+# =========================
+# 1) EntryJS / Tool / Paint
+# =========================
+fetch "https://playentry.org/lib/entry-js/dist/entry.min.js"  "$WWW/lib/entry-js/dist/entry.min.js"
+fetch "https://playentry.org/lib/entry-js/dist/entry.css"     "$WWW/lib/entry-js/dist/entry.css"
 
-curl -L --retry 5 -o "$WWW/lib/entry-tool/dist/entry-tool.js" "https://playentry.org/lib/entry-tool/dist/entry-tool.js"
-curl -L --retry 5 -o "$WWW/lib/entry-tool/dist/entry-tool.css" "https://playentry.org/lib/entry-tool/dist/entry-tool.css"
+fetch "https://playentry.org/lib/entry-js/extern/lang/ko.js"      "$WWW/lib/entry-js/extern/lang/ko.js"
+fetch "https://playentry.org/lib/entry-js/extern/util/static.js"  "$WWW/lib/entry-js/extern/util/static.js"
 
-curl -L --retry 5 -o "$WWW/lib/entry-paint/dist/static/js/entry-paint.js" "https://playentry.org/lib/entry-paint/dist/static/js/entry-paint.js"
+fetch "https://playentry.org/lib/entry-tool/dist/entry-tool.js"   "$WWW/lib/entry-tool/dist/entry-tool.js"
+fetch "https://playentry.org/lib/entry-tool/dist/entry-tool.css"  "$WWW/lib/entry-tool/dist/entry-tool.css"
 
-echo "✅ entry assets fetched into www/lib"
+fetch "https://playentry.org/lib/entry-paint/dist/static/js/entry-paint.js" "$WWW/lib/entry-paint/dist/static/js/entry-paint.js"
+
+# ==========================================
+# 2) 필수 의존성(Entry Docs 설치 예제 기반)
+#    - lodash
+#    - ws/locales.js
+#    - react18 / react-dom18
+# ==========================================
+# 문서에서 이 라이브러리들이 CDN으로 배포된다고 안내함 2
+# 우선 playentry.org/lib 경로로 받고, 실패하면 entry-cdn.pstatic.net에서 받도록 fallback.
+
+# lodash
+if curl -L --fail -o /dev/null -sI "https://playentry.org/lib/lodash/dist/lodash.min.js"; then
+  fetch "https://playentry.org/lib/lodash/dist/lodash.min.js" "$WWW/lib/lodash/dist/lodash.min.js"
+else
+  fetch "https://entry-cdn.pstatic.net/lodash/dist/lodash.min.js" "$WWW/lib/lodash/dist/lodash.min.js"
+fi
+
+# locales.js
+if curl -L --fail -o /dev/null -sI "https://playentry.org/lib/js/ws/locales.js"; then
+  fetch "https://playentry.org/lib/js/ws/locales.js" "$WWW/lib/js/ws/locales.js"
+else
+  fetch "https://entry-cdn.pstatic.net/js/ws/locales.js" "$WWW/lib/js/ws/locales.js"
+fi
+
+# react18
+if curl -L --fail -o /dev/null -sI "https://playentry.org/lib/js/react18/react.production.min.js"; then
+  fetch "https://playentry.org/lib/js/react18/react.production.min.js" "$WWW/lib/js/react18/react.production.min.js"
+  fetch "https://playentry.org/lib/js/react18/react-dom.production.min.js" "$WWW/lib/js/react18/react-dom.production.min.js"
+else
+  fetch "https://entry-cdn.pstatic.net/js/react18/react.production.min.js" "$WWW/lib/js/react18/react.production.min.js"
+  fetch "https://entry-cdn.pstatic.net/js/react18/react-dom.production.min.js" "$WWW/lib/js/react18/react-dom.production.min.js"
+fi
+
+echo "✅ fetch complete. Files under: $WWW/lib"
