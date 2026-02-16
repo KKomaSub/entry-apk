@@ -4,11 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WWW="$ROOT/www"
 
-mkdir -p "$WWW"
+LIB="$WWW/lib"
+JS="$WWW/js"
 
-# -------------------------
-# Helpers
-# -------------------------
+mkdir -p "$LIB" "$JS"
+
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
 # fetch_try <out> <url1> [url2 ...]
@@ -29,12 +29,275 @@ fetch_try() {
   return 1
 }
 
-# 호환용: 혹시 기존에 fetch(...) 호출이 남아도 동작하게
-fetch() {
-  local url="$1"
-  local out="$2"
-  fetch_try "$out" "$url"
+require_file() {
+  local f="$1"
+  if [ ! -f "$f" ]; then
+    log "❌ MISSING: $f"
+    return 1
+  fi
+  return 0
 }
+
+# CDN 후보
+P1="https://playentry.org"
+P2="https://entry-cdn.pstatic.net"
+GH_RAW="https://raw.githubusercontent.com"
+
+log "=== Fetch EntryJS workspace deps (Docs checklist enforced) ==="
+
+# ---------------------------
+# CSS (필수)  1
+# ---------------------------
+fetch_try "$LIB/entry-tool/dist/entry-tool.css" \
+  "$P1/lib/entry-tool/dist/entry-tool.css" \
+  "$P2/lib/entry-tool/dist/entry-tool.css"
+
+fetch_try "$LIB/entry-js/dist/entry.css" \
+  "$P1/lib/entry-js/dist/entry.css" \
+  "$P2/lib/entry-js/dist/entry.css"
+
+# ---------------------------
+# language (필수) 2
+# ---------------------------
+fetch_try "$LIB/entry-js/extern/lang/ko.js" \
+  "$P1/lib/entry-js/extern/lang/ko.js" \
+  "$P2/lib/entry-js/extern/lang/ko.js"
+
+# ---------------------------
+# lodash (필수)
+# ---------------------------
+fetch_try "$LIB/lodash/dist/lodash.min.js" \
+  "$P1/lib/lodash/dist/lodash.min.js" \
+  "$P2/lib/lodash/dist/lodash.min.js"
+
+# ---------------------------
+# ✅ locales.js (필수) — 경로가 자주 바뀜
+# 문서: path/to/js/ws/locales.js  3
+# ---------------------------
+fetch_try "$JS/ws/locales.js" \
+  "$P1/js/ws/locales.js" \
+  "$P2/js/ws/locales.js" \
+  "$P1/lib/js/ws/locales.js" \
+  "$P2/lib/js/ws/locales.js" \
+  "$GH_RAW/entrylabs/entryjs/develop/example/js/ws/locales.js" \
+  "$GH_RAW/entrylabs/entryjs/master/example/js/ws/locales.js"
+
+# ---------------------------
+# react18 (필수)
+# ---------------------------
+fetch_try "$JS/react18/react.production.min.js" \
+  "$P1/lib/js/react18/react.production.min.js" \
+  "$P2/js/react18/react.production.min.js"
+
+fetch_try "$JS/react18/react-dom.production.min.js" \
+  "$P1/lib/js/react18/react-dom.production.min.js" \
+  "$P2/js/react18/react-dom.production.min.js"
+
+# ---------------------------
+# CreateJS (필수)
+# ---------------------------
+fetch_try "$LIB/PreloadJS/lib/preloadjs-0.6.0.min.js" \
+  "$P1/lib/PreloadJS/lib/preloadjs-0.6.0.min.js" \
+  "$P2/lib/PreloadJS/lib/preloadjs-0.6.0.min.js"
+
+fetch_try "$LIB/EaselJS/lib/easeljs-0.8.0.min.js" \
+  "$P1/lib/EaselJS/lib/easeljs-0.8.0.min.js" \
+  "$P2/lib/EaselJS/lib/easeljs-0.8.0.min.js"
+
+fetch_try "$LIB/SoundJS/lib/soundjs-0.6.0.min.js" \
+  "$P1/lib/SoundJS/lib/soundjs-0.6.0.min.js" \
+  "$P2/lib/SoundJS/lib/soundjs-0.6.0.min.js"
+
+fetch_try "$LIB/SoundJS/lib/flashaudioplugin-0.6.0.min.js" \
+  "$P1/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js" \
+  "$P2/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js"
+
+# ---------------------------
+# jquery / jquery-ui / velocity (필수)
+# ---------------------------
+fetch_try "$LIB/jquery/jquery.min.js" \
+  "$P1/lib/jquery/jquery.min.js" \
+  "$P2/lib/jquery/jquery.min.js"
+
+fetch_try "$LIB/jquery-ui/ui/minified/jquery-ui.min.js" \
+  "$P1/lib/jquery-ui/ui/minified/jquery-ui.min.js" \
+  "$P2/lib/jquery-ui/ui/minified/jquery-ui.min.js"
+
+fetch_try "$LIB/velocity/velocity.min.js" \
+  "$P1/lib/velocity/velocity.min.js" \
+  "$P2/lib/velocity/velocity.min.js"
+
+# ---------------------------
+# CodeMirror (필수)
+# ---------------------------
+fetch_try "$LIB/codemirror/lib/codemirror.js" \
+  "$P1/lib/codemirror/lib/codemirror.js" \
+  "$P2/lib/codemirror/lib/codemirror.js"
+
+fetch_try "$LIB/codemirror/addon/hint/show-hint.js" \
+  "$P1/lib/codemirror/addon/hint/show-hint.js" \
+  "$P2/lib/codemirror/addon/hint/show-hint.js"
+
+fetch_try "$LIB/codemirror/addon/lint/lint.js" \
+  "$P1/lib/codemirror/addon/lint/lint.js" \
+  "$P2/lib/codemirror/addon/lint/lint.js"
+
+fetch_try "$LIB/codemirror/addon/selection/active-line.js" \
+  "$P1/lib/codemirror/addon/selection/active-line.js" \
+  "$P2/lib/codemirror/addon/selection/active-line.js"
+
+fetch_try "$LIB/codemirror/mode/javascript/javascript.js" \
+  "$P1/lib/codemirror/mode/javascript/javascript.js" \
+  "$P2/lib/codemirror/mode/javascript/javascript.js"
+
+fetch_try "$LIB/codemirror/addon/hint/javascript-hint.js" \
+  "$P1/lib/codemirror/addon/hint/javascript-hint.js" \
+  "$P2/lib/codemirror/addon/hint/javascript-hint.js"
+
+# ---------------------------
+# jshint / python (필수)  ※ 문서에 “js/ws/”로 표기 4
+# 현실에서는 /js/.. 로 운영되는 경우도 있어 후보 추가
+# ---------------------------
+fetch_try "$JS/ws/jshint.js" \
+  "$P1/js/ws/jshint.js" \
+  "$P2/js/ws/jshint.js" \
+  "$P1/lib/js/ws/jshint.js" \
+  "$P2/lib/js/ws/jshint.js" \
+  "$P1/js/jshint.js"
+
+fetch_try "$JS/ws/python.js" \
+  "$P1/js/ws/python.js" \
+  "$P2/js/ws/python.js" \
+  "$P1/lib/js/ws/python.js" \
+  "$P2/lib/js/ws/python.js" \
+  "$P1/js/textmode/python/python.js"
+
+# ---------------------------
+# fuzzy / socket.io-client (필수)
+# ---------------------------
+fetch_try "$LIB/fuzzy/lib/fuzzy.js" \
+  "$P1/lib/fuzzy/lib/fuzzy.js" \
+  "$P2/lib/fuzzy/lib/fuzzy.js"
+
+fetch_try "$LIB/socket.io-client/socket.io.js" \
+  "$P1/lib/socket.io-client/socket.io.js" \
+  "$P2/lib/socket.io-client/socket.io.js"
+
+# ---------------------------
+# entry extern utils (필수)
+# ---------------------------
+fetch_try "$LIB/entry-js/extern/util/filbert.js" \
+  "$P1/lib/entry-js/extern/util/filbert.js" \
+  "$P2/lib/entry-js/extern/util/filbert.js"
+
+fetch_try "$LIB/entry-js/extern/util/CanvasInput.js" \
+  "$P1/lib/entry-js/extern/util/CanvasInput.js" \
+  "$P2/lib/entry-js/extern/util/CanvasInput.js"
+
+fetch_try "$LIB/entry-js/extern/util/ndgmr.Collision.js" \
+  "$P1/lib/entry-js/extern/util/ndgmr.Collision.js" \
+  "$P2/lib/entry-js/extern/util/ndgmr.Collision.js"
+
+fetch_try "$LIB/entry-js/extern/util/handle.js" \
+  "$P1/lib/entry-js/extern/util/handle.js" \
+  "$P2/lib/entry-js/extern/util/handle.js"
+
+fetch_try "$LIB/entry-js/extern/util/bignumber.min.js" \
+  "$P1/lib/entry-js/extern/util/bignumber.min.js" \
+  "$P2/lib/entry-js/extern/util/bignumber.min.js"
+
+# webfontloader (필수)
+fetch_try "$LIB/components-webfontloader/webfontloader.js" \
+  "$P1/lib/components-webfontloader/webfontloader.js" \
+  "$P2/lib/components-webfontloader/webfontloader.js"
+
+# entry-lms (문서 예시에 포함: 필수로 체크) 5
+fetch_try "$LIB/entry-lms/dist/assets/app.js" \
+  "$P1/lib/entry-lms/dist/assets/app.js" \
+  "$P2/lib/entry-lms/dist/assets/app.js"
+
+# static.js (필수) 6
+fetch_try "$LIB/entry-js/extern/util/static.js" \
+  "$P1/lib/entry-js/extern/util/static.js" \
+  "$P2/lib/entry-js/extern/util/static.js"
+
+# entry-tool / entry-paint (필수) 7
+fetch_try "$LIB/entry-tool/dist/entry-tool.js" \
+  "$P1/lib/entry-tool/dist/entry-tool.js" \
+  "$P2/lib/entry-tool/dist/entry-tool.js"
+
+fetch_try "$LIB/entry-paint/dist/static/js/entry-paint.js" \
+  "$P1/lib/entry-paint/dist/static/js/entry-paint.js" \
+  "$P2/lib/entry-paint/dist/static/js/entry-paint.js"
+
+# sound-editor (문서 예시에는 포함) 8
+# 없을 수도 있어서 optional
+fetch_try "$WWW/external/sound/sound-editor.js" \
+  "$P1/external/sound/sound-editor.js" \
+  "$P2/external/sound/sound-editor.js" || true
+
+# entry.min.js (필수) 9
+fetch_try "$LIB/entry-js/dist/entry.min.js" \
+  "$P1/lib/entry-js/dist/entry.min.js" \
+  "$P2/lib/entry-js/dist/entry.min.js"
+
+# ---------------------------
+# ✅ Docs 필수 항목 검증 (누락 0 강제) 10
+# ---------------------------
+log "=== Verify required files (Docs checklist) ==="
+
+REQ=(
+  "$LIB/entry-tool/dist/entry-tool.css"
+  "$LIB/entry-js/dist/entry.css"
+  "$LIB/entry-js/extern/lang/ko.js"
+  "$LIB/lodash/dist/lodash.min.js"
+  "$JS/ws/locales.js"
+  "$JS/react18/react.production.min.js"
+  "$JS/react18/react-dom.production.min.js"
+  "$LIB/PreloadJS/lib/preloadjs-0.6.0.min.js"
+  "$LIB/EaselJS/lib/easeljs-0.8.0.min.js"
+  "$LIB/SoundJS/lib/soundjs-0.6.0.min.js"
+  "$LIB/SoundJS/lib/flashaudioplugin-0.6.0.min.js"
+  "$LIB/jquery/jquery.min.js"
+  "$LIB/jquery-ui/ui/minified/jquery-ui.min.js"
+  "$LIB/velocity/velocity.min.js"
+  "$LIB/codemirror/lib/codemirror.js"
+  "$LIB/codemirror/addon/hint/show-hint.js"
+  "$LIB/codemirror/addon/lint/lint.js"
+  "$LIB/codemirror/addon/selection/active-line.js"
+  "$LIB/codemirror/mode/javascript/javascript.js"
+  "$LIB/codemirror/addon/hint/javascript-hint.js"
+  "$JS/ws/jshint.js"
+  "$LIB/fuzzy/lib/fuzzy.js"
+  "$JS/ws/python.js"
+  "$LIB/socket.io-client/socket.io.js"
+  "$LIB/entry-js/extern/util/filbert.js"
+  "$LIB/entry-js/extern/util/CanvasInput.js"
+  "$LIB/entry-js/extern/util/ndgmr.Collision.js"
+  "$LIB/entry-js/extern/util/handle.js"
+  "$LIB/entry-js/extern/util/bignumber.min.js"
+  "$LIB/components-webfontloader/webfontloader.js"
+  "$LIB/entry-lms/dist/assets/app.js"
+  "$LIB/entry-js/extern/util/static.js"
+  "$LIB/entry-tool/dist/entry-tool.js"
+  "$LIB/entry-paint/dist/static/js/entry-paint.js"
+  "$LIB/entry-js/dist/entry.min.js"
+)
+
+MISSING=0
+for f in "${REQ[@]}"; do
+  if ! require_file "$f"; then
+    MISSING=$((MISSING+1))
+  fi
+done
+
+if [ "$MISSING" -ne 0 ]; then
+  log "❌ Verification failed. Missing files: $MISSING"
+  exit 1
+fi
+
+log "✅ All required files present (per Entry Docs run example)."
+log "Output root: $WWW"}
 
 # 필수 파일 존재 체크
 require_file() {
