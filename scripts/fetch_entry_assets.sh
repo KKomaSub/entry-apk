@@ -28,7 +28,13 @@ fetch_try() {
   log "FAIL all candidates -> $out"
   return 1
 }
-
+# --- compatibility wrapper ---
+# 파일 안에 fetch "URL" "OUT" 호출이 남아있어도 동작하게
+fetch() {
+  local url="$1"
+  local out="$2"
+  fetch_try "$out" "$url"
+}
 require_file() {
   local f="$1"
   if [ ! -f "$f" ]; then
