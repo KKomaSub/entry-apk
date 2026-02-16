@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -u  # -e 제거(중간 실패로 전체 중단 방지)
+set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WWW="$ROOT/www"
@@ -47,7 +47,6 @@ fetch_one() {
   return 0
 }
 
-# 병렬 실행 (MAX_JOBS 제한)
 run_bg() {
   fetch_one "$@" &
   while [ "$(jobs -pr | wc -l | tr -d ' ')" -ge "$MAX_JOBS" ]; do
@@ -56,12 +55,10 @@ run_bg() {
 }
 
 wait_all() {
-  # wait -n 없이 “모든 job이 끝날 때까지” 대기
   local pids
   while true; do
     pids="$(jobs -pr)"
     [ -z "$pids" ] && break
-    # 하나라도 끝나면 다음 루프로
     wait $pids 2>/dev/null || true
     sleep 0.1
   done
@@ -71,26 +68,47 @@ echo "=== Fetch Entry assets (offline vendoring, parallel) ==="
 echo "ROOT=$ROOT"
 echo "WWW=$WWW"
 echo "MAX_JOBS=$MAX_JOBS"
-echo "ENTRYJS_REF=$ENTRYJS_REF"
 echo ""
 
-# --- Entry core/tool/paint ---
-run_bg "$LIB/entry-js/dist/entry.min.js" \
-  "$P1/lib/entry-js/dist/entry.min.js" \
-  "$P2/lib/entry-js/dist/entry.min.js"
+# ✅ EntryJS (workspace) — 반드시 entryjs 경로!
+run_bg "$LIB/entryjs/dist/entry.min.js" \
+  "$P1/lib/entryjs/dist/entry.min.js" \
+  "$P2/lib/entryjs/dist/entry.min.js"
 
-run_bg "$LIB/entry-js/dist/entry.css" \
-  "$P1/lib/entry-js/dist/entry.css" \
-  "$P2/lib/entry-js/dist/entry.css"
+run_bg "$LIB/entryjs/dist/entry.css" \
+  "$P1/lib/entryjs/dist/entry.css" \
+  "$P2/lib/entryjs/dist/entry.css"
 
-run_bg "$LIB/entry-js/extern/lang/ko.js" \
-  "$P1/lib/entry-js/extern/lang/ko.js" \
-  "$P2/lib/entry-js/extern/lang/ko.js"
+run_bg "$LIB/entryjs/extern/lang/ko.js" \
+  "$P1/lib/entryjs/extern/lang/ko.js" \
+  "$P2/lib/entryjs/extern/lang/ko.js"
 
-run_bg "$LIB/entry-js/extern/util/static.js" \
-  "$P1/lib/entry-js/extern/util/static.js" \
-  "$P2/lib/entry-js/extern/util/static.js"
+run_bg "$LIB/entryjs/extern/util/static.js" \
+  "$P1/lib/entryjs/extern/util/static.js" \
+  "$P2/lib/entryjs/extern/util/static.js"
 
+# (권장) extern util들
+run_bg "$LIB/entryjs/extern/util/filbert.js" \
+  "$P1/lib/entryjs/extern/util/filbert.js" \
+  "$P2/lib/entryjs/extern/util/filbert.js"
+
+run_bg "$LIB/entryjs/extern/util/CanvasInput.js" \
+  "$P1/lib/entryjs/extern/util/CanvasInput.js" \
+  "$P2/lib/entryjs/extern/util/CanvasInput.js"
+
+run_bg "$LIB/entryjs/extern/util/ndgmr.Collision.js" \
+  "$P1/lib/entryjs/extern/util/ndgmr.Collision.js" \
+  "$P2/lib/entryjs/extern/util/ndgmr.Collision.js"
+
+run_bg "$LIB/entryjs/extern/util/handle.js" \
+  "$P1/lib/entryjs/extern/util/handle.js" \
+  "$P2/lib/entryjs/extern/util/handle.js"
+
+run_bg "$LIB/entryjs/extern/util/bignumber.min.js" \
+  "$P1/lib/entryjs/extern/util/bignumber.min.js" \
+  "$P2/lib/entryjs/extern/util/bignumber.min.js"
+
+# Entry tool/paint
 run_bg "$LIB/entry-tool/dist/entry-tool.js" \
   "$P1/lib/entry-tool/dist/entry-tool.js" \
   "$P2/lib/entry-tool/dist/entry-tool.js"
@@ -103,7 +121,7 @@ run_bg "$LIB/entry-paint/dist/static/js/entry-paint.js" \
   "$P1/lib/entry-paint/dist/static/js/entry-paint.js" \
   "$P2/lib/entry-paint/dist/static/js/entry-paint.js"
 
-# --- Common libs ---
+# Common libs
 run_bg "$LIB/lodash/dist/lodash.min.js" \
   "$P1/lib/lodash/dist/lodash.min.js" \
   "$P2/lib/lodash/dist/lodash.min.js"
@@ -152,9 +170,8 @@ run_bg "$LIB/socket.io-client/socket.io.js" \
   "$P1/lib/socket.io-client/socket.io.js" \
   "$P2/lib/socket.io-client/socket.io.js"
 
-# --- ws files ---
+# ws files
 mkdir -p "$JS/ws"
-
 run_bg "$JS/ws/locales.js" \
   "$GH_RAW/entrylabs/entryjs/$ENTRYJS_REF/example/js/ws/locales.js" \
   "$GH_RAW/entrylabs/entryjs/master/example/js/ws/locales.js" \
@@ -176,35 +193,14 @@ run_bg "$JS/ws/python.js" \
   "$P2/lib/js/ws/python.js" \
   "$P1/js/textmode/python/python.js"
 
-# Entry extern utils
-run_bg "$LIB/entry-js/extern/util/filbert.js" \
-  "$P1/lib/entry-js/extern/util/filbert.js" \
-  "$P2/lib/entry-js/extern/util/filbert.js"
-
-run_bg "$LIB/entry-js/extern/util/CanvasInput.js" \
-  "$P1/lib/entry-js/extern/util/CanvasInput.js" \
-  "$P2/lib/entry-js/extern/util/CanvasInput.js"
-
-run_bg "$LIB/entry-js/extern/util/ndgmr.Collision.js" \
-  "$P1/lib/entry-js/extern/util/ndgmr.Collision.js" \
-  "$P2/lib/entry-js/extern/util/ndgmr.Collision.js"
-
-run_bg "$LIB/entry-js/extern/util/handle.js" \
-  "$P1/lib/entry-js/extern/util/handle.js" \
-  "$P2/lib/entry-js/extern/util/handle.js"
-
-run_bg "$LIB/entry-js/extern/util/bignumber.min.js" \
-  "$P1/lib/entry-js/extern/util/bignumber.min.js" \
-  "$P2/lib/entry-js/extern/util/bignumber.min.js"
-
 # ✅ 여기까지 병렬 다운로드 대기
 wait_all
 
-# --- React 18: npm vendoring (마지막에 안전하게) ---
+# React 18는 npm에서 벤더링
 echo "=== Vendor React 18 from npm (stable) ==="
 npm install --no-audit --no-fund --silent react@18.2.0 react-dom@18.2.0 || true
-
 mkdir -p "$JS/react18"
+
 if [ -f "$ROOT/node_modules/react/umd/react.production.min.js" ]; then
   cp -f "$ROOT/node_modules/react/umd/react.production.min.js" "$JS/react18/react.production.min.js"
 else
@@ -217,7 +213,7 @@ else
   echo "$JS/react18/react-dom.production.min.js" >> "$FAIL_LOG"
 fi
 
-# summary (항상 성공 종료)
+# Summary (항상 성공 종료)
 if [ -s "$FAIL_LOG" ]; then
   COUNT="$(sort -u "$FAIL_LOG" | wc -l | tr -d ' ')"
   log_big "FETCH SUMMARY: $COUNT file(s) missing"
