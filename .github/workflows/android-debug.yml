@@ -24,11 +24,15 @@ jobs:
           ls -al
           ls -al scripts || true
           ls -al www || true
+          echo "----- package.json -----"
           cat package.json
+          echo "----- capacitor config -----"
+          ls -al capacitor.config.* || true
 
       - name: Install deps
         run: npm install
 
+      # fetch 스크립트 실행권한
       - name: Make fetch script executable
         run: chmod +x scripts/fetch_entry_assets.sh
 
@@ -41,9 +45,19 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
+      # Capacitor Android 생성/동기화
       - name: Add & Sync Android (Capacitor)
         run: |
           npx cap add android || true
+          npx cap sync android
+
+      # ✅ 아이콘 자동 생성 (요청하신 이미지 사용)
+      # 필요조건: package.json devDependencies에 "@capacitor/assets"가 있어야 함
+      - name: Generate App Icon (Capacitor Assets)
+        run: |
+          mkdir -p assets
+          curl -L "https://img.kkomaweb.com/api/image?id=cK9YkGqw&name=1000025550.png" -o assets/logo.png
+          npx @capacitor/assets generate --android
           npx cap sync android
 
       - name: Build Debug APK
