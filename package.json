@@ -6,6 +6,7 @@
   "scripts": {
     "fetch": "bash scripts/fetch_entry_assets.sh",
     "bundle": "node scripts/make_bundle.js",
+    "assets": "npx @capacitor/assets generate --android",
     "cap:sync": "npx cap sync android",
     "apk:debug": "cd android && ./gradlew assembleDebug"
   },
@@ -14,6 +15,7 @@
     "@capacitor/core": "^6.1.2"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.0",
     "react": "18.2.0",
     "react-dom": "18.2.0"
   }
