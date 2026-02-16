@@ -1,15 +1,13 @@
-name: Build Entry Offline Editor APK (Debug)
+name: android-debug
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
 
 jobs:
-  build:
+  build-debug-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -18,64 +16,61 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "18"
 
-      - name: Setup Java
+      - name: Install deps
+        run: |
+          npm install --legacy-peer-deps
+
+      # ✅ 아이콘 원본을 레포에 안 올렸다면 여기서 URL로 받아도 됨
+      - name: Ensure icon source (assets/icon.png)
+        run: |
+          mkdir -p assets
+          if [ ! -f assets/icon.png ]; then
+            echo "Downloading icon.png ..."
+            curl -L --fail -o assets/icon.png "https://img.kkomaweb.com/api/image?id=cK9YkGqw&name=1000025550.png"
+          fi
+          ls -al assets/icon.png
+
+      - name: Generate Android icons/splash
+        run: |
+          npm run assets
+
+      - name: Fetch Entry assets (offline vendoring)
+        run: |
+          npm run fetch
+
+      - name: Make JS bundle
+        run: |
+          npm run bundle
+
+      - name: Setup Java (17)
         uses: actions/setup-java@v4
         with:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Debug repo structure
-        run: |
-          echo PWD
-          pwd
-          echo LIST
-          ls -al
-          echo WORKFLOWS
-          ls -al .github/workflows || true
-          echo SCRIPTS
-          ls -al scripts || true
-          echo WWW
-          ls -al www || true
-          echo PACKAGE_JSON
-          cat package.json || true
-          echo CAP_CONFIG
-          ls -al capacitor.config.* || true
-          cat capacitor.config.json 2>/dev/null || true
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Install deps
+      - name: Install Capacitor CLI
         run: |
-          npm install
+          npm i -g @capacitor/cli
 
-      - name: Make fetch script executable
+      - name: Add Android platform (if missing) and sync
         run: |
-          chmod +x scripts/fetch_entry_assets.sh
-
-      - name: Fetch Entry assets into www/lib
-        run: |
-          npm run fetch
-
-      - name: Add & Sync Android (Capacitor)
-        run: |
-          npx cap add android || true
-          npx cap sync android
-
-      - name: Generate App Icon
-        run: |
-          npm install -D @capacitor/assets
-          mkdir -p assets
-          curl -L "https://img.kkomaweb.com/api/image?id=cK9YkGqw&name=1000025550.png" -o assets/logo.png
-          npx @capacitor/assets generate --android
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
           npx cap sync android
 
       - name: Build Debug APK
-        working-directory: android
         run: |
+          cd android
           ./gradlew assembleDebug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: entry-offline-editor-debug-apk
+          name: EntryOffline-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
