@@ -1,40 +1,88 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Entry Offline Editor</title>
 
-  <!-- CSS -->
   <link rel="stylesheet" href="./lib/entry-tool/dist/entry-tool.css" />
   <link rel="stylesheet" href="./lib/entry-js/dist/entry.css" />
 
   <style>
-    html, body { margin:0; height:100%; overflow:hidden; background:#111; }
-    #entryContainer { width:100%; height:100%; background:#f5f5f5; }
-    #boot {
-      position:fixed; inset:0; background:#000; color:#0f0;
-      font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      padding:12px; white-space:pre-wrap; overflow:auto; z-index:9999;
+    html,body{margin:0;height:100%;overflow:hidden;background:#111}
+    #entryContainer{width:100%;height:100%;background:#f5f5f5}
+    #boot{
+      position:fixed;inset:0;background:#000;color:#0f0;
+      font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      padding:12px;white-space:pre-wrap;overflow:auto;z-index:9999
     }
-    .bad { color:#ff5252; }
-    .dim { color:#66ff66; opacity:.8; }
+    .bad{color:#ff5c5c}
   </style>
+
+  <script>
+    window.onerror = function (m, s, l, c, e) {
+      const el = document.getElementById("boot");
+      if (el) {
+        el.innerText = "JS ERROR:\n\n" + String(e && e.stack ? e.stack : m);
+        el.style.color = "#ff5c5c";
+      }
+    };
+  </script>
 </head>
 <body>
   <div id="entryContainer"></div>
-  <div id="boot">Entry Offline Editor\nLoading assets…\n</div>
+  <div id="boot">Entry Offline Editor\nLoading bundle…</div>
+
+  <script src="./bundle/vendor.bundle.js"></script>
 
   <script>
-    // ✅ 여기서 속도 모드 조절
-    // true: 빨리 뜨게(필수만) / false: 더 많은 기능(텍스트코딩/검사 등) 포함
-    const FAST_MODE = true;
+    function showErr(title, e) {
+      const el = document.getElementById("boot");
+      el.innerText = title + "\n\n" + String(e && e.stack ? e.stack : e);
+      el.style.color = "#ff5c5c";
+    }
 
-    const bootEl = document.getElementById("boot");
-    const log = (s, cls="") => {
-      const line = document.createElement("div");
-      if (cls) line.className = cls;
-      line.textContent = s;
+    function bootDiag() {
+      const miss = [];
+      const ok = (n, c) => { if (!c) miss.push(n); };
+
+      ok("Entry", !!window.Entry);
+      ok("Entry.init", window.Entry && typeof window.Entry.init === "function");
+      ok("_ (lodash)", !!window._);
+      ok("React", !!window.React);
+      ok("ReactDOM", !!window.ReactDOM);
+      ok("createjs", !!window.createjs);
+      ok("$ (jQuery)", !!window.jQuery || !!window.$);
+      ok("CodeMirror", !!window.CodeMirror);
+
+      return miss;
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      try {
+        const miss = bootDiag();
+        if (miss.length) {
+          throw new Error("Missing globals:\n- " + miss.join("\n- "));
+        }
+
+        const boot = document.getElementById("boot");
+        boot.innerText += "\nStarting Entry.init …";
+
+        Entry.init(document.getElementById("entryContainer"), {
+          type: "workspace",
+          libDir: "./lib",
+          textCodingEnable: true
+        });
+
+        Entry.loadProject();
+        boot.remove();
+      } catch (e) {
+        showErr("Boot Error", e);
+      }
+    });
+  </script>
+</body>
+</html>      line.textContent = s;
       bootEl.appendChild(line);
       bootEl.scrollTop = bootEl.scrollHeight;
     };
