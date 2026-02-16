@@ -7,8 +7,10 @@ const root = path.join(__dirname, "..");
 const www = path.join(root, "www");
 
 /**
- * ✅ index.html에서 순서 고정으로 직접 로드:
- * - lib/lodash/dist/lodash.min.js   (EntryJS보다 먼저)
+ * ✅ index.html에서 EntryJS 전에 직접 로드:
+ * - lib/lodash/dist/lodash.min.js
+ * - lib/jquery/jquery.min.js
+ * - lib/jquery-ui/ui/minified/jquery-ui.min.js
  * - js/ws/locales.js
  * - lib/entryjs/extern/lang/ko.js
  * - lib/entryjs/extern/util/static.js
@@ -25,8 +27,6 @@ const files = [
   "lib/SoundJS/lib/soundjs-0.6.0.min.js",
   "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js",
 
-  "lib/jquery/jquery.min.js",
-  "lib/jquery-ui/ui/minified/jquery-ui.min.js",
   "lib/velocity/velocity.min.js",
 
   "lib/codemirror/lib/codemirror.js",
