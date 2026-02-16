@@ -7,11 +7,13 @@ const root = path.join(__dirname, "..");
 const www = path.join(root, "www");
 
 /**
- * ✅ index.html에서 순서 고정으로 로드하는 파일(번들 제외)
- * - js/ws/locales.js (Lang 전역 생성)
+ * ✅ 아래 파일은 index.html에서 "순서 고정"으로 로드
+ * - js/ws/locales.js
  * - lib/entry-js/extern/lang/ko.js
  * - lib/entry-js/extern/util/static.js
  * - lib/entry-js/dist/entry.min.js
+ * - lib/entry-tool/dist/entry-tool.js
+ * - lib/entry-paint/dist/static/js/entry-paint.js
  */
 const files = [
   "lib/lodash/dist/lodash.min.js",
@@ -34,10 +36,7 @@ const files = [
   "js/ws/jshint.js",
   "js/ws/python.js",
 
-  "lib/socket.io-client/socket.io.js",
-
-  "lib/entry-tool/dist/entry-tool.js",
-  "lib/entry-paint/dist/static/js/entry-paint.js"
+  "lib/socket.io-client/socket.io.js"
 ];
 
 let out = "";
@@ -45,13 +44,11 @@ const missing = [];
 
 for (const f of files) {
   const p = path.join(www, f);
-
   if (!fs.existsSync(p)) {
     missing.push(f);
     out += `\n/* MISSING: ${f} */\n`;
     continue;
   }
-
   out += `\n/* ===== ${f} ===== */\n`;
   out += fs.readFileSync(p, "utf8") + "\n";
 }
