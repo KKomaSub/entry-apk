@@ -1,8 +1,7 @@
-{
+6{
   "appId": "com.kkoma.entryoffline",
   "appName": "엔트리 오프라인",
   "webDir": "www",
-  "bundledWebRuntime": false,
   "android": {
     "allowMixedContent": true
   },
