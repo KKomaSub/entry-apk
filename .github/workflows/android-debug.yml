@@ -17,39 +17,31 @@ jobs:
         uses: actions/checkout@v4
 
       # -----------------------------
-      # Node + npm cache
+      # Node (⚠️ lockfile 없어도 실패하지 않게 cache 사용 안함)
       # -----------------------------
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "18"
-          cache: "npm"
 
       # -----------------------------
       # Install deps (lockfile 없어도 동작)
-      # - entry-offline 계열은 peer deps 충돌이 흔해서 legacy-peer-deps 고정
-      # - capacitor.config.ts 쓰는 경우 typescript 필수
       # -----------------------------
       - name: Install dependencies (safe)
         shell: bash
         run: |
           set -e
           echo "=== package.json scripts ==="
-          node -e "try{const p=require('./package.json');console.log(p.scripts||{});}catch(e){console.log('no package.json')}"
+          node -e "try{const p=require('./package.json');console.log(p.scripts||{});}catch(e){console.log('no package.json');process.exit(2)}"
 
-          # typescript가 없으면 cap이 죽는 경우가 있어 사전 보강
-          if [ -f package.json ]; then
-            npm install --legacy-peer-deps
-            node -e "const p=require('./package.json'); const dev=(p.devDependencies||{}); const dep=(p.dependencies||{}); process.exit((dev.typescript||dep.typescript)?0:1);" \
-              || npm install -D typescript --legacy-peer-deps
-          else
-            echo "ERROR: package.json not found at repo root"
-            exit 2
-          fi
+          npm install --legacy-peer-deps
+
+          # capacitor.config.ts 케이스 대비: typescript 없으면 cap이 죽음
+          node -e "const p=require('./package.json'); const dev=(p.devDependencies||{}); const dep=(p.dependencies||{}); process.exit((dev.typescript||dep.typescript)?0:1);" \
+            || npm install -D typescript --legacy-peer-deps
 
       # -----------------------------
-      # Fetch Entry assets (스크립트가 있으면 실행)
-      # - scripts/fetch_entry_assets.sh가 없거나 npm run fetch가 없으면 건너뛰되 로그 남김
+      # Fetch Entry assets (있으면 실행 / 없으면 스킵)
       # -----------------------------
       - name: Fetch entry assets (if available)
         shell: bash
@@ -59,33 +51,32 @@ jobs:
             chmod +x scripts/fetch_entry_assets.sh
           fi
 
-          HAS_FETCH_SCRIPT=0
-          node -e "const p=require('./package.json'); process.exit((p.scripts&&p.scripts.fetch)?0:1);" && HAS_FETCH_SCRIPT=1
-
-          if [ "$HAS_FETCH_SCRIPT" -eq 1 ]; then
+          node -e "const p=require('./package.json'); process.exit((p.scripts&&p.scripts.fetch)?0:1);"
+          HAS_FETCH="$?"
+          if [ "$HAS_FETCH" -eq 0 ]; then
             echo "Running: npm run fetch"
             npm run fetch
             echo "fetch exit=$?"
           else
             if [ -f scripts/fetch_entry_assets.sh ]; then
-              echo "No npm script 'fetch', running shell directly: scripts/fetch_entry_assets.sh"
+              echo "No npm script 'fetch', running shell directly"
               MAX_JOBS=6 bash scripts/fetch_entry_assets.sh
               echo "fetch_entry_assets.sh exit=$?"
             else
-              echo "WARN: no npm script 'fetch' and no scripts/fetch_entry_assets.sh (skip)"
+              echo "WARN: no fetch script found (skip)"
             fi
           fi
           exit 0
 
       # -----------------------------
-      # Bundle/Assets 단계 (있으면 실행)
-      # - 사용자가 만들었던 make_bundle.js / assets 단계가 있을 수 있어 optional로 처리
+      # bundle/assets/build 단계 (있으면만 실행)
       # -----------------------------
       - name: Build web bundle/assets (optional)
         shell: bash
         run: |
           set +e
           node -e "const p=require('./package.json'); console.log('scripts=',Object.keys(p.scripts||{}));"
+
           for s in bundle assets build; do
             node -e "const p=require('./package.json'); process.exit((p.scripts&&p.scripts['$s'])?0:1);"
             if [ "$?" -eq 0 ]; then
@@ -100,16 +91,13 @@ jobs:
 
       # -----------------------------
       # Capacitor Android 준비
-      # - android 폴더가 없으면 cap add android
-      # - 있으면 cap sync android
       # -----------------------------
       - name: Capacitor prepare android
         shell: bash
         run: |
           set -e
           if [ ! -f capacitor.config.json ] && [ ! -f capacitor.config.ts ] && [ ! -f capacitor.config.js ]; then
-            echo "WARN: capacitor config not found. (capacitor.config.*)"
-            echo "If this repo is capacitor-based, add capacitor config."
+            echo "WARN: capacitor config not found (capacitor.config.*)"
           fi
 
           if [ ! -d android ]; then
@@ -121,7 +109,7 @@ jobs:
           npx cap sync android
 
       # -----------------------------
-      # Java 17 (AGP/Gradle 안정)
+      # Java 17
       # -----------------------------
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -137,7 +125,7 @@ jobs:
         run: |
           set -e
           if [ ! -d android ]; then
-            echo "ERROR: android folder still missing after cap step"
+            echo "ERROR: android folder missing"
             exit 3
           fi
 
@@ -153,7 +141,7 @@ jobs:
           fi
 
       # -----------------------------
-      # Outputs 탐색(경로 하드코딩 X)
+      # Outputs 탐색 (항상 실행)
       # -----------------------------
       - name: Locate outputs
         if: always()
@@ -169,7 +157,7 @@ jobs:
           ls -al android/app/build/outputs/apk/debug || true
 
       # -----------------------------
-      # APK 업로드: 전부 업로드(찾는 방식)
+      # 업로드 (항상 실행)
       # -----------------------------
       - name: Upload artifacts (APK/AAB)
         if: always()
