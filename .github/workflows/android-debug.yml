@@ -1,86 +1,182 @@
-name: Build Debug APK
+name: build-debug-apk
 
 on:
   push:
-    branches:
-      - main
-      - master
-  workflow_dispatch:
+    branches: [ "main", "master" ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
 
 jobs:
-  build-debug-apk:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # ------------------------------
-      # Node 환경
-      # ------------------------------
+      # -----------------------------
+      # Node + npm cache
+      # -----------------------------
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: "18"
+          cache: "npm"
 
-      - name: Install dependencies
+      # -----------------------------
+      # Install deps (lockfile 없어도 동작)
+      # - entry-offline 계열은 peer deps 충돌이 흔해서 legacy-peer-deps 고정
+      # - capacitor.config.ts 쓰는 경우 typescript 필수
+      # -----------------------------
+      - name: Install dependencies (safe)
+        shell: bash
         run: |
-          npm install --legacy-peer-deps
+          set -e
+          echo "=== package.json scripts ==="
+          node -e "try{const p=require('./package.json');console.log(p.scripts||{});}catch(e){console.log('no package.json')}"
 
-      # ------------------------------
-      # 웹 자산 fetch
-      # ------------------------------
-      - name: Fetch entry assets
-        run: |
-          chmod +x scripts/fetch_entry_assets.sh
-          npm run fetch
+          # typescript가 없으면 cap이 죽는 경우가 있어 사전 보강
+          if [ -f package.json ]; then
+            npm install --legacy-peer-deps
+            node -e "const p=require('./package.json'); const dev=(p.devDependencies||{}); const dep=(p.dependencies||{}); process.exit((dev.typescript||dep.typescript)?0:1);" \
+              || npm install -D typescript --legacy-peer-deps
+          else
+            echo "ERROR: package.json not found at repo root"
+            exit 2
+          fi
 
-      # ------------------------------
-      # Android 빌드 준비
-      # ------------------------------
-      - name: Install Capacitor
+      # -----------------------------
+      # Fetch Entry assets (스크립트가 있으면 실행)
+      # - scripts/fetch_entry_assets.sh가 없거나 npm run fetch가 없으면 건너뛰되 로그 남김
+      # -----------------------------
+      - name: Fetch entry assets (if available)
+        shell: bash
         run: |
+          set +e
+          if [ -f scripts/fetch_entry_assets.sh ]; then
+            chmod +x scripts/fetch_entry_assets.sh
+          fi
+
+          HAS_FETCH_SCRIPT=0
+          node -e "const p=require('./package.json'); process.exit((p.scripts&&p.scripts.fetch)?0:1);" && HAS_FETCH_SCRIPT=1
+
+          if [ "$HAS_FETCH_SCRIPT" -eq 1 ]; then
+            echo "Running: npm run fetch"
+            npm run fetch
+            echo "fetch exit=$?"
+          else
+            if [ -f scripts/fetch_entry_assets.sh ]; then
+              echo "No npm script 'fetch', running shell directly: scripts/fetch_entry_assets.sh"
+              MAX_JOBS=6 bash scripts/fetch_entry_assets.sh
+              echo "fetch_entry_assets.sh exit=$?"
+            else
+              echo "WARN: no npm script 'fetch' and no scripts/fetch_entry_assets.sh (skip)"
+            fi
+          fi
+          exit 0
+
+      # -----------------------------
+      # Bundle/Assets 단계 (있으면 실행)
+      # - 사용자가 만들었던 make_bundle.js / assets 단계가 있을 수 있어 optional로 처리
+      # -----------------------------
+      - name: Build web bundle/assets (optional)
+        shell: bash
+        run: |
+          set +e
+          node -e "const p=require('./package.json'); console.log('scripts=',Object.keys(p.scripts||{}));"
+          for s in bundle assets build; do
+            node -e "const p=require('./package.json'); process.exit((p.scripts&&p.scripts['$s'])?0:1);"
+            if [ "$?" -eq 0 ]; then
+              echo "Running: npm run $s"
+              npm run "$s"
+              echo "npm run $s exit=$?"
+            else
+              echo "Skip: npm run $s (missing)"
+            fi
+          done
+          exit 0
+
+      # -----------------------------
+      # Capacitor Android 준비
+      # - android 폴더가 없으면 cap add android
+      # - 있으면 cap sync android
+      # -----------------------------
+      - name: Capacitor prepare android
+        shell: bash
+        run: |
+          set -e
+          if [ ! -f capacitor.config.json ] && [ ! -f capacitor.config.ts ] && [ ! -f capacitor.config.js ]; then
+            echo "WARN: capacitor config not found. (capacitor.config.*)"
+            echo "If this repo is capacitor-based, add capacitor config."
+          fi
+
+          if [ ! -d android ]; then
+            echo "android/ not found -> npx cap add android"
+            npx cap add android || true
+          fi
+
+          echo "Running: npx cap sync android"
           npx cap sync android
 
-      # ------------------------------
-      # Java 17 (AGP 8+ 대응)
-      # ------------------------------
+      # -----------------------------
+      # Java 17 (AGP/Gradle 안정)
+      # -----------------------------
       - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: "17"
 
-      # ------------------------------
-      # Gradle build
-      # ------------------------------
+      # -----------------------------
+      # Gradle build debug
+      # -----------------------------
       - name: Build Debug APK
+        shell: bash
         run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+          set -e
+          if [ ! -d android ]; then
+            echo "ERROR: android folder still missing after cap step"
+            exit 3
+          fi
 
-      # ------------------------------
-      # APK 위치 디버깅 출력
-      # ------------------------------
-      - name: Locate build outputs
+          cd android
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            ./gradlew --version
+            ./gradlew assembleDebug --stacktrace --info
+          else
+            echo "ERROR: gradlew not found in android/"
+            ls -al
+            exit 4
+          fi
+
+      # -----------------------------
+      # Outputs 탐색(경로 하드코딩 X)
+      # -----------------------------
+      - name: Locate outputs
+        if: always()
+        shell: bash
         run: |
-          echo "=== Searching APK ==="
-          find android -type f -name "*.apk" -maxdepth 8 || true
-          echo "=== Searching AAB ==="
-          find android -type f -name "*.aab" -maxdepth 8 || true
-          echo "=== Output directories ==="
+          echo "=== find APK ==="
+          find android -maxdepth 10 -type f -name "*.apk" -print || true
+          echo "=== find AAB ==="
+          find android -maxdepth 10 -type f -name "*.aab" -print || true
+          echo "=== list outputs ==="
           ls -al android/app/build/outputs || true
           ls -al android/app/build/outputs/apk || true
           ls -al android/app/build/outputs/apk/debug || true
 
-      # ------------------------------
-      # 아티팩트 업로드 (자동 탐색)
-      # ------------------------------
-      - name: Upload APK/AAB
+      # -----------------------------
+      # APK 업로드: 전부 업로드(찾는 방식)
+      # -----------------------------
+      - name: Upload artifacts (APK/AAB)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: android-build
           path: |
             android/**/build/outputs/**/*.apk
             android/**/build/outputs/**/*.aab
+          if-no-files-found: warn
