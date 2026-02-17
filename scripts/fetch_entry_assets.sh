@@ -5,8 +5,8 @@
 # - CreateJS는 code.createjs.com에서 받음 (createjs 전역 안정)
 # - flashaudioplugin은 optional (없어도 정상)
 # - lodash는 고정 경로로 저장: www/lib/lodash.min.js (index.html과 1:1 매칭)
+# - CodeMirror도 고정 경로로 저장: www/lib/codemirror/*
 # - npm fallback: @entrylabs/entry 통째로 받아서 images/media 등 리소스 보강
-
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,9 +20,6 @@ MAX_JOBS="${MAX_JOBS:-6}"
 
 P1="https://playentry.org"
 P2="https://entry-cdn.pstatic.net"
-
-GH_RAW="https://raw.githubusercontent.com"
-ENTRYJS_REF="${ENTRYJS_REF:-develop}"
 
 FAIL_LOG="$WWW/.fetch_failed.txt"
 : > "$FAIL_LOG"
@@ -198,7 +195,6 @@ log "=== Fetch Entry assets (offline vendoring) ==="
 log "ROOT=$ROOT"
 log "WWW =$WWW"
 log "MAX_JOBS=$MAX_JOBS"
-log "ENTRYJS_REF=$ENTRYJS_REF"
 echo ""
 
 # ───────────── 0) 필수 라이브러리 ─────────────
@@ -206,6 +202,15 @@ echo ""
 # ✅ lodash를 "고정 경로"로 저장 (index.html이 이 파일만 봄)
 run_bg "$WWW/lib/lodash.min.js" \
   "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"
+
+# ✅ CodeMirror(텍스트코딩/Vim) 고정 경로 저장
+mkdir -p "$WWW/lib/codemirror"
+run_bg "$WWW/lib/codemirror/codemirror.js" \
+  "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"
+run_bg "$WWW/lib/codemirror/codemirror.css" \
+  "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css"
+run_bg "$WWW/lib/codemirror/vim.js" \
+  "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/keymap/vim.min.js"
 
 # jQuery
 run_bg "$LIB/jquery/jquery.min.js" \
@@ -223,15 +228,17 @@ run_bg "$LIB/EaselJS/lib/easeljs-0.8.2.min.js"     "https://code.createjs.com/ea
 run_bg "$LIB/PreloadJS/lib/preloadjs-0.6.2.min.js" "https://code.createjs.com/preloadjs-0.6.2.min.js"
 run_bg "$LIB/SoundJS/lib/soundjs-0.6.2.min.js"     "https://code.createjs.com/soundjs-0.6.2.min.js"
 
-# flashaudioplugin은 optional
+# flashaudioplugin은 optional (없어도 정상)
 fetch_optional "$LIB/SoundJS/lib/flashaudioplugin-0.6.2.min.js" \
   "https://code.createjs.com/flashaudioplugin-0.6.2.min.js" \
   "https://cdnjs.cloudflare.com/ajax/libs/SoundJS/0.6.2/flashaudioplugin-0.6.2.min.js" &
 
-# ws / legacy-video
+# ws / legacy-video (선택)
 mkdir -p "$JS/ws" "$JS/module/legacy-video"
 run_bg "$JS/module/legacy-video/index.js" "/module/legacy-video/index.js"
 run_bg "$JS/ws/python.js" "https://entry-cdn.pstatic.net/js/ws/python.js" "/js/ws/python.js" "/lib/js/ws/python.js"
+# locales.js는 서버에서 404일 수 있어 "선택"으로 받지 않음(원하면 아래 주석 해제)
+# fetch_optional "$JS/ws/locales.js" "/js/ws/locales.js" "/lib/js/ws/locales.js" &
 
 # ───────────── 1) EntryJS 본체/외부 ─────────────
 run_bg "$LIB/entryjs/dist/entry.min.js" "/lib/entryjs/dist/entry.min.js" "/lib/entry-js/dist/entry.min.js"
@@ -252,7 +259,7 @@ wait_all
 # 이미지/아이콘/리소스 보강
 npm_fallback_entry
 
-# alias
+# alias (entryjs <-> entry-js)
 log "=== Alias copy: /lib/entryjs <-> /lib/entry-js ==="
 mkdir -p "$WWW/lib/entry-js" "$WWW/lib/entryjs"
 cp -R "$WWW/lib/entryjs/"* "$WWW/lib/entry-js/" 2>/dev/null || true
