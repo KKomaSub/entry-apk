@@ -6,7 +6,7 @@
 # - CSS url(...) 의존성 자동 다운로드
 # - HTML src/href/poster + JS 문자열 경로 의존성 자동 다운로드
 # - static.js / entry.min.js 내부 문자열 경로 의존성 자동 다운로드
-# - (핵심) CDN 404/경로변경을 회피하기 위해 @entrylabs/entry NPM 패키지에서 assets를 추출해 채우는 fallback
+# - (핵심) CDN 404/경로변경을 회피하기 위해 @entrylabs/entry NPM 패키지에서 assets를 "통째로" 추출해 채우는 fallback
 # - /lib/entryjs <-> /lib/entry-js 경로 alias 양방향 복사
 #
 # 목표: 404가 나와도 "중단하지 않고", 가능한 후보를 끝까지 시도하고, 실패는 크게 로그만 남기기
@@ -338,7 +338,7 @@ fi
 
 # ─────────────────────────────────────────────────────────────
 # 5) NPM FALLBACK (가장 확실한 방식)
-#  - CDN에서 이미지/아이콘이 404 나면 @entrylabs/entry 패키지에서 꺼내서 채움
+#  - CDN에서 이미지/아이콘이 404 나면 @entrylabs/entry 패키지에서 "통째로" 꺼내서 채움
 # ─────────────────────────────────────────────────────────────
 npm_fallback_entry() {
   command -v npm >/dev/null 2>&1 || { big "npm not found -> skip npm fallback"; return 0; }
@@ -346,23 +346,24 @@ npm_fallback_entry() {
 
   local NEED=0
 
-  [ -d "$WWW/lib/entry-js/images" ] || NEED=1
-  [ -d "$WWW/lib/entry-js/dist" ]  || NEED=1
-  [ -d "$WWW/lib/entry-js/extern" ]|| NEED=1
+  # images/media가 없으면 거의 100% 404가 뜸
+  [ -d "$WWW/lib/entry-js/images/media" ] || NEED=1
 
-  if [ -s "$FAIL_LOG" ] && grep -qE '/images/|/media/|/img/|/icon' "$FAIL_LOG"; then
+  # 실패 로그에 이미지류가 있으면 강제 실행
+  if [ -s "$FAIL_LOG" ] && grep -qE '/images/|/media/|/img/|/icon|\.svg|\.png|\.jpg' "$FAIL_LOG"; then
     NEED=1
   fi
 
   [ "$NEED" -eq 0 ] && { log "NPM fallback not needed"; return 0; }
 
-  big "NPM FALLBACK: extracting @entrylabs/entry into www/lib/entry-js"
+  big "NPM FALLBACK: extracting FULL @entrylabs/entry into www/lib/entry-js"
 
   local TMP="$WWW/.tmp_entry_pkg"
   rm -rf "$TMP"
   mkdir -p "$TMP"
   pushd "$TMP" >/dev/null || return 0
 
+  # 원하는 버전 고정 가능: npm pack @entrylabs/entry@x.y.z
   if ! npm pack @entrylabs/entry >/dev/null 2>&1; then
     big "npm pack failed (network/auth). skip."
     popd >/dev/null
@@ -387,21 +388,29 @@ npm_fallback_entry() {
 
   mkdir -p "$WWW/lib/entry-js"
 
-  for d in dist extern images resources module js; do
-    if [ -d "package/$d" ]; then
-      log "NPM -> copy package/$d"
-      mkdir -p "$WWW/lib/entry-js/$d"
-      cp -R "package/$d/"* "$WWW/lib/entry-js/$d/" 2>/dev/null || true
-    fi
-  done
+  # ✅ 핵심: package/ 전체를 통째로 www/lib/entry-js 로 복사(구조 유지)
+  (
+    shopt -s dotglob nullglob
+    cp -R "package/"* "$WWW/lib/entry-js/" 2>/dev/null || true
+  )
 
+  # ✅ alias 유지: /lib/entryjs 도 같은 내용으로 맞춤
   mkdir -p "$WWW/lib/entryjs"
-  cp -R "$WWW/lib/entry-js/"* "$WWW/lib/entryjs/" 2>/dev/null || true
+  (
+    shopt -s dotglob nullglob
+    cp -R "$WWW/lib/entry-js/"* "$WWW/lib/entryjs/" 2>/dev/null || true
+  )
 
   popd >/dev/null
   rm -rf "$TMP"
 
-  big "NPM FALLBACK DONE: www/lib/entry-js filled from @entrylabs/entry"
+  # 간단 검증 로그(없어도 계속)
+  if [ -d "$WWW/lib/entry-js/images/media" ]; then
+    log "NPM FALLBACK OK: images/media exists"
+  else
+    big "NPM FALLBACK WARNING: images/media still missing (package may differ)"
+  fi
+
   return 0
 }
 npm_fallback_entry
@@ -427,3 +436,4 @@ else
 fi
 
 exit 0
+
