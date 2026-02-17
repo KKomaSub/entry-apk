@@ -33,31 +33,23 @@
       el.scrollTop = el.scrollHeight;
     }
 
-    // 전역 에러 로깅
     window.onerror = function (m, s, l, c, e) {
       bootLine("JS ERROR:", "bad");
       bootLine(String(e && e.stack ? e.stack : m), "bad");
     };
 
-    // ✅ "Unexpected token '<'" 방지용: 스크립트를 fetch로 받아 HTML이면 실행 안 함
     async function safeLoadScript(url, {required=false, label=url} = {}) {
       try {
         bootLine(`LOAD ${label}: ${url}`, "dim");
-
         const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
         const txt = await res.text();
         const head = txt.trim().slice(0, 32);
-
-        // 404/리다이렉트 등으로 HTML이 돌아오는 경우가 많아서 방어
         if (head.startsWith("<!doctype") || head.startsWith("<html") || head.startsWith("<")) {
           throw new Error(`Got HTML instead of JS (starts with: ${JSON.stringify(head)})`);
         }
-
         const blob = new Blob([txt], { type: "text/javascript" });
         const blobUrl = URL.createObjectURL(blob);
-
         await new Promise((resolve, reject) => {
           const s = document.createElement("script");
           s.src = blobUrl;
@@ -66,7 +58,6 @@
           s.onerror = () => { URL.revokeObjectURL(blobUrl); reject(new Error("script tag load error")); };
           document.head.appendChild(s);
         });
-
         bootLine(`OK   ${label}`, "ok");
         return true;
       } catch (e) {
@@ -76,9 +67,7 @@
       }
     }
 
-    function must(cond, msg) {
-      if (!cond) throw new Error(msg);
-    }
+    function must(cond, msg) { if (!cond) throw new Error(msg); }
   </script>
 </head>
 
@@ -86,66 +75,45 @@
   <div id="entryContainer"></div>
   <div id="boot">Entry Offline Editor\nLoading…</div>
 
-  <!-- ✅ 핵심 라이브러리는 "정적 로드" (파일명이 정확하면 안정적) -->
-
-  <!-- underscore가 _ 를 담당 (EntryJS가 기대) -->
-  <script src="./lib/underscore/underscore-min.js"></script>
-
-  <!-- lodash는 별도 보관 -->
+  <!-- ✅ 0) lodash를 _로 사용 (Entry/paint가 memoize/chain을 요구) -->
   <script src="./lib/lodash/dist/lodash.min.js"></script>
-  <script>
-    // lodash가 전역 _ 를 덮어썼으면, 다시 underscore로 돌리고 lodash는 window.lodash로 보관
-    if (window._ && typeof window._.noConflict === "function") {
-      window.lodash = window._.noConflict(); // lodash 반환, _는 underscore로 복구
-    }
-    // underscore 구버전 호환
-    if (window._ && typeof window._.contains !== "function" && typeof window._.includes === "function") {
-      window._.contains = window._.includes;
-    }
-    if (window._ && typeof window._.findWhere !== "function" && typeof window._.find === "function") {
-      window._.findWhere = function(list, attrs){
-        return window._.find(list, function(item){
-          for (var k in attrs) if (item[k] !== attrs[k]) return false;
-          return true;
-        });
-      };
-    }
-  </script>
 
-  <!-- jQuery -->
+  <!-- ✅ 1) jQuery -->
   <script src="./lib/jquery/jquery.min.js"></script>
   <script src="./lib/jquery-ui/ui/minified/jquery-ui.min.js"></script>
 
-  <!-- ✅ CreateJS: createjs 전역이 생겨야 Entry.Stage가 동작 -->
-  <!-- ⚠️ fetch 스크립트가 내려받는 파일명과 반드시 일치해야 함 -->
+  <!-- ✅ 2) CreateJS (createjs 전역 필요) -->
   <script src="./lib/EaselJS/lib/easeljs-0.8.2.min.js"></script>
   <script src="./lib/PreloadJS/lib/preloadjs-0.6.2.min.js"></script>
   <script src="./lib/SoundJS/lib/soundjs-0.6.2.min.js"></script>
-  <!-- flashaudioplugin은 필수 아님: 404/실패 유발하므로 제거 -->
 
-  <!-- EntryJS prereq -->
+  <!-- ✅ 3) Entry prereq -->
   <script src="./lib/entryjs/extern/lang/ko.js"></script>
   <script src="./lib/entryjs/extern/util/static.js"></script>
   <script src="./lib/entryjs/extern/util/handle.js"></script>
   <script src="./lib/entryjs/extern/util/bignumber.min.js"></script>
 
-  <!-- Entry core -->
+  <!-- ✅ 4) Entry core -->
   <script src="./lib/entryjs/dist/entry.min.js"></script>
 
-  <!-- tool/paint -->
+  <!-- ✅ 5) tool/paint (paint도 lodash(_) 필요) -->
   <script src="./lib/entry-tool/dist/entry-tool.js"></script>
   <script src="./lib/entry-paint/dist/static/js/entry-paint.js"></script>
 
   <script>
     (async () => {
       try {
-        // ✅ locales.js / vendor.bundle.js는 "있으면 로드, 없으면 경고만"
+        // locales.js는 있으면 로드(없어도 OK)
         await safeLoadScript("./js/ws/locales.js", { required:false, label:"ws/locales.js" });
-        await safeLoadScript("./bundle/vendor.bundle.js", { required:false, label:"bundle/vendor.bundle.js" });
+
+        // ⚠️ vendor.bundle.js는 지금 단계에서는 로드하지 마세요.
+        // CodeMirror 등 추가 의존이 필요해서 부팅을 방해합니다.
+        // await safeLoadScript("./bundle/vendor.bundle.js", { required:false, label:"bundle/vendor.bundle.js" });
 
         // ===== Boot diagnostics =====
-        bootLine("_ (underscore) = " + (typeof window._), window._ ? "ok" : "bad");
-        bootLine("_.findWhere = " + (window._ ? typeof _.findWhere : "N/A"), (window._ && typeof _.findWhere==="function") ? "ok" : "bad");
+        bootLine("_ (lodash) = " + (typeof window._), (typeof window._==="function" || typeof window._==="object") ? "ok" : "bad");
+        bootLine("_.memoize = " + (window._ ? typeof _.memoize : "N/A"), (window._ && typeof _.memoize==="function") ? "ok" : "bad");
+        bootLine("_.chain = " + (window._ ? typeof _.chain : "N/A"), (window._ && typeof _.chain==="function") ? "ok" : "bad");
         bootLine("$ (jQuery) = " + (typeof window.$), window.$ ? "ok" : "bad");
         bootLine("createjs = " + (typeof window.createjs), (typeof window.createjs==="object") ? "ok" : "bad");
         bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
@@ -155,14 +123,15 @@
         bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
           (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
 
-        must(window._, "underscore(_) missing");
-        must(typeof _.findWhere === "function", "underscore mismatch: _.findWhere missing");
+        must(window._, "lodash(_) missing");
+        must(typeof _.memoize === "function", "lodash mismatch: _.memoize missing");
+        must(typeof _.chain === "function", "lodash mismatch: _.chain missing");
         must(window.$, "jQuery missing");
+        must(typeof window.createjs === "object", "createjs missing");
         must(window.Lang, "Lang missing");
         must(window.EaselHandle, "EaselHandle missing");
         must(window.BigNumber, "BigNumber missing");
-        must(window.Entry && typeof window.Entry.init === "function", "Entry.init missing");
-        must(typeof window.createjs === "object", "createjs missing: CreateJS(Easel/Preload/Sound) not loaded or wrong filenames");
+        must(window.Entry && typeof window.Entry.init === "function", "Entry.init missing (entry.min.js crashed or wrong file)");
 
         bootLine("Starting Entry.init …", "dim");
 
@@ -172,8 +141,8 @@
           textCodingEnable: true
         });
 
-        // ⚠️ 인자 없이 loadProject() 호출하면 split 관련 에러가 날 수 있어 제거
-        // Entry.loadProject(projectJson) 형태로 "프로젝트 JSON"이 있을 때만 호출하세요.
+        // ⚠️ Entry.loadProject()는 프로젝트 JSON이 있을 때만 호출
+        // Entry.loadProject(projectJson);
 
         document.getElementById("boot").remove();
       } catch (e) {
