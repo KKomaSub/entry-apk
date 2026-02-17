@@ -75,43 +75,39 @@
   <div id="entryContainer"></div>
   <div id="boot">Entry Offline Editor\nLoading…</div>
 
-  <!-- ✅ 0) lodash를 _로 사용 (Entry/paint가 memoize/chain을 요구) -->
-  <script src="./lib/lodash/dist/lodash.min.js"></script>
+  <!-- ✅ lodash 고정 경로 (fetch에서 www/lib/lodash.min.js로 저장) -->
+  <script src="./lib/lodash.min.js"></script>
 
-  <!-- ✅ 1) jQuery -->
+  <!-- ✅ jQuery -->
   <script src="./lib/jquery/jquery.min.js"></script>
   <script src="./lib/jquery-ui/ui/minified/jquery-ui.min.js"></script>
 
-  <!-- ✅ 2) CreateJS (createjs 전역 필요) -->
+  <!-- ✅ CreateJS -->
   <script src="./lib/EaselJS/lib/easeljs-0.8.2.min.js"></script>
   <script src="./lib/PreloadJS/lib/preloadjs-0.6.2.min.js"></script>
   <script src="./lib/SoundJS/lib/soundjs-0.6.2.min.js"></script>
 
-  <!-- ✅ 3) Entry prereq -->
+  <!-- ✅ Entry prereq -->
   <script src="./lib/entryjs/extern/lang/ko.js"></script>
   <script src="./lib/entryjs/extern/util/static.js"></script>
   <script src="./lib/entryjs/extern/util/handle.js"></script>
   <script src="./lib/entryjs/extern/util/bignumber.min.js"></script>
 
-  <!-- ✅ 4) Entry core -->
+  <!-- ✅ Entry core -->
   <script src="./lib/entryjs/dist/entry.min.js"></script>
 
-  <!-- ✅ 5) tool/paint (paint도 lodash(_) 필요) -->
+  <!-- ✅ tool/paint -->
   <script src="./lib/entry-tool/dist/entry-tool.js"></script>
   <script src="./lib/entry-paint/dist/static/js/entry-paint.js"></script>
 
   <script>
     (async () => {
       try {
-        // locales.js는 있으면 로드(없어도 OK)
+        // ws/locales.js는 선택(없어도 됨)
         await safeLoadScript("./js/ws/locales.js", { required:false, label:"ws/locales.js" });
 
-        // ⚠️ vendor.bundle.js는 지금 단계에서는 로드하지 마세요.
-        // CodeMirror 등 추가 의존이 필요해서 부팅을 방해합니다.
-        // await safeLoadScript("./bundle/vendor.bundle.js", { required:false, label:"bundle/vendor.bundle.js" });
-
         // ===== Boot diagnostics =====
-        bootLine("_ (lodash) = " + (typeof window._), (typeof window._==="function" || typeof window._==="object") ? "ok" : "bad");
+        bootLine("_ (lodash) = " + (typeof window._), window._ ? "ok" : "bad");
         bootLine("_.memoize = " + (window._ ? typeof _.memoize : "N/A"), (window._ && typeof _.memoize==="function") ? "ok" : "bad");
         bootLine("_.chain = " + (window._ ? typeof _.chain : "N/A"), (window._ && typeof _.chain==="function") ? "ok" : "bad");
         bootLine("$ (jQuery) = " + (typeof window.$), window.$ ? "ok" : "bad");
@@ -123,7 +119,7 @@
         bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
           (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
 
-        must(window._, "lodash(_) missing");
+        must(window._, "lodash(_) missing (./lib/lodash.min.js not loaded)");
         must(typeof _.memoize === "function", "lodash mismatch: _.memoize missing");
         must(typeof _.chain === "function", "lodash mismatch: _.chain missing");
         must(window.$, "jQuery missing");
@@ -141,7 +137,7 @@
           textCodingEnable: true
         });
 
-        // ⚠️ Entry.loadProject()는 프로젝트 JSON이 있을 때만 호출
+        // ⚠️ 프로젝트 JSON이 있을 때만 호출:
         // Entry.loadProject(projectJson);
 
         document.getElementById("boot").remove();
