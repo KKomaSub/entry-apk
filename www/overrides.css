@@ -1,36 +1,33 @@
-/* 1) 기본 이미지가 레이아웃을 깨는 문제 완화 */
-img, canvas, svg {
+/* WebView에서 기본 box-sizing/이미지 스케일로 UI가 깨지는 케이스 방지 */
+* { box-sizing: border-box; }
+
+/* Entry 내부 이미지/아이콘이 가끔 원본 크기로 튀는 문제 완화 */
+img {
   max-width: 100%;
-  max-height: 100%;
+  height: auto;
 }
 
-/* 2) 아이콘/썸네일이 과도하게 커져서 잘리는 케이스 완화
-      (Entry UI의 작은 아이콘들은 보통 background-image로 들어오지만,
-       일부는 <img>로도 들어옵니다) */
-.entryToolPopup img,
-.entryToolModal img,
-.entryPicture img,
-.entryObjectList img {
-  object-fit: contain;
+/* Entry 레이아웃이 100% 채우도록 */
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
-/* 3) 드롭다운/팝업이 화면 밖으로 밀려 안 보이는 케이스 완화 */
-.ui-dialog,
-.ui-widget-overlay,
-.entryToolPopup,
-.entryToolModal {
-  z-index: 9999 !important;
+/* Entry 컨테이너가 flex 영향 안 받게 */
+#entryContainer {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
 
-/* 4) “오브젝트 추가” 화면이 가려지는 경우(특히 WebView) 대비 */
-.entryToolPopup,
-.entryToolModal,
-.entryToolModal * {
-  box-sizing: border-box;
+/* 캔버스/스테이지 영역이 잘리는 문제 완화 */
+canvas {
+  image-rendering: auto;
 }
 
-/* 5) 혹시 body overflow 숨김 때문에 내부 스크롤 막히는 경우 대비 */
-.entryToolModal__content,
-.entryToolPopup__content {
-  overflow: auto;
+/* Android WebView에서 텍스트가 이상하게 확대되는 현상 방지 */
+html {
+  -webkit-text-size-adjust: 100%;
 }
