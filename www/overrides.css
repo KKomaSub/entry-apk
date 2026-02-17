@@ -1,0 +1,47 @@
+/* www/overrides.css */
+/* 1) 전체 이미지가 컨테이너를 넘어서지 않게 */
+img, svg {
+  max-width: 100% !important;
+  height: auto !important;
+}
+
+/* 2) Entry UI에서 썸네일/아이콘이 background-image로 들어가는 케이스: contain으로 */
+.entrySpriteImage,
+.entryObjectImage,
+.spriteImage,
+.objectImage,
+.image,
+.thumbnail,
+.thumb,
+.icon,
+.preview,
+[class*="sprite"] [class*="image"],
+[class*="object"] [class*="image"],
+[class*="thumb"],
+[class*="icon"] {
+  background-size: contain !important;
+  background-repeat: no-repeat !important;
+  background-position: center center !important;
+}
+
+/* 3) 잘림 방지: 썸네일 박스들이 overflow:hidden으로 잘라버리는 경우가 많아서 완화 */
+.entrySpriteImage,
+.entryObjectImage,
+.spriteImage,
+.objectImage,
+.thumbnail,
+.thumb,
+.preview {
+  overflow: visible !important;
+}
+
+/* 4) “박스 크기는 유지 + 내부 이미지는 맞춤” (img 태그로 들어가는 썸네일용) */
+.entrySpriteImage img,
+.entryObjectImage img,
+.thumbnail img,
+.thumb img,
+.preview img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+}
