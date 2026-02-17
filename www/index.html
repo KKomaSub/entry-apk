@@ -30,16 +30,15 @@ function bootLine(t, cls=""){
 }
 window.onerror=function(m,s,l,c,e){
   bootLine("JS ERROR:","bad");
-  bootLine(String(e&&e.stack?e.stack:m),"bad");
+  bootLine(String(e && e.stack ? e.stack : m),"bad");
 };
 
 async function probeBase(prefix){
   try{
     const r=await fetch(prefix+"lib/lodash/dist/lodash.min.js",{method:"GET",cache:"no-store"});
     return r.ok;
-  }catch(_){return false;}
+  }catch(_){ return false; }
 }
-
 function loadJS(src){
   return new Promise(resolve=>{
     const s=document.createElement("script");
@@ -49,7 +48,6 @@ function loadJS(src){
     document.head.appendChild(s);
   });
 }
-
 function loadCSS(href){
   return new Promise(resolve=>{
     const l=document.createElement("link");
@@ -60,37 +58,82 @@ function loadCSS(href){
     document.head.appendChild(l);
   });
 }
-
 function must(cond,msg){
   if(!cond) throw new Error(msg);
   bootLine("OK   "+msg,"ok");
 }
 
 async function boot(){
-
+  // ✅ BASE 자동 탐지
   const candidates=["./","/","/public/","/www/"];
   let BASE="./";
   for(const c of candidates){
     bootLine("PROBE BASE: "+c,"dim");
-    if(await probeBase(c)){BASE=c;break;}
+    if(await probeBase(c)){ BASE=c; break; }
   }
   bootLine("BASE = "+BASE,"ok");
 
-  /* ================= CSS ================= */
+  // ✅ 핵심: 절대경로(/로 시작)로 나가는 리소스 요청을 BASE 기준으로 자동 보정
+  const __rewriteUrl = (u) => {
+    if (!u || typeof u !== "string") return u;
+    if (/^(https?:|data:|blob:|file:)/i.test(u)) return u;
+    if (u.startsWith("/")) return BASE + u.slice(1); // "/lib/.." -> "BASE/lib/.."
+    return u;
+  };
 
+  // fetch 리라이트
+  const __origFetch = window.fetch?.bind(window);
+  if (__origFetch) {
+    window.fetch = (input, init) => {
+      try {
+        if (typeof input === "string") return __origFetch(__rewriteUrl(input), init);
+        if (input && typeof input.url === "string") {
+          const url = __rewriteUrl(input.url);
+          if (url !== input.url) return __origFetch(new Request(url, input), init);
+        }
+      } catch (_) {}
+      return __origFetch(input, init);
+    };
+  }
+
+  // XHR 리라이트 (createjs/preloadjs가 주로 XHR 사용)
+  const __origOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url, ...rest){
+    try { url = __rewriteUrl(url); } catch (_) {}
+    return __origOpen.call(this, method, url, ...rest);
+  };
+
+  // 이미지 src 안전망
+  const __desc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
+  if (__desc && __desc.set) {
+    Object.defineProperty(HTMLImageElement.prototype, "src", {
+      get: __desc.get,
+      set(v){ return __desc.set.call(this, __rewriteUrl(v)); }
+    });
+  }
+
+  bootLine("PATCH URL rewrite: /... -> BASE/...", "ok");
+
+  // ✅ CSS 로드
   const cssList=[
     BASE+"lib/entry-tool/dist/entry-tool.css",
     BASE+"lib/entryjs/dist/entry.css",
     BASE+"lib/codemirror/codemirror.css",
-    BASE+"overrides.css"
+    BASE+"overrides.css",
   ];
   for(const href of cssList){
     const r=await loadCSS(href);
-    bootLine((r.ok?"OK   CSS  ":"MISS CSS ")+href,r.ok?"ok":"bad");
+    bootLine((r.ok?"OK   CSS  ":"MISS CSS ")+href, r.ok?"ok":"bad");
   }
 
-  /* =============== JS LOAD =============== */
+  // ✅ optional locales
+  {
+    const src=BASE+"js/ws/locales.js";
+    const r=await loadJS(src);
+    bootLine((r.ok?"OK   JS   ":"MISS(opt) ")+src, r.ok?"ok":"dim");
+  }
 
+  // ✅ JS 로드(순서 중요)
   const jsList=[
     BASE+"lib/lodash/dist/lodash.min.js",
     BASE+"lib/jquery/jquery.min.js",
@@ -99,11 +142,12 @@ async function boot(){
     BASE+"lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
     BASE+"lib/EaselJS/lib/easeljs-0.8.0.min.js",
     BASE+"lib/SoundJS/lib/soundjs-0.6.0.min.js",
-    BASE+"lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js",
+    BASE+"lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js", // optional
 
     BASE+"lib/velocity/velocity.min.js",
+
     BASE+"lib/codemirror/codemirror.js",
-    BASE+"lib/codemirror/vim.js",
+    BASE+"lib/codemirror/vim.js", // optional
 
     BASE+"lib/entry-tool/dist/entry-tool.js",
 
@@ -113,23 +157,31 @@ async function boot(){
     BASE+"lib/entryjs/extern/util/bignumber.min.js",
 
     BASE+"lib/module/legacy-video/index.js",
+
     BASE+"lib/external/sound/sound-editor.js",
 
     BASE+"lib/entryjs/dist/entry.min.js",
-    BASE+"lib/entry-paint/dist/static/js/entry-paint.js"
+    BASE+"lib/entry-paint/dist/static/js/entry-paint.js",
   ];
 
   for(const src of jsList){
-    const optional=src.includes("flashaudioplugin")||src.includes("vim.js");
+    const optional = src.includes("flashaudioplugin") || src.endsWith("/vim.js");
     const r=await loadJS(src);
+    bootLine((r.ok?"OK   JS   ":(optional?"MISS(opt) ":"MISS     "))+src,
+      r.ok?"ok":(optional?"dim":"bad"));
 
-    bootLine(
-      (r.ok?"OK   JS   ":(optional?"MISS(opt) ":"MISS     "))+src,
-      r.ok?"ok":(optional?"dim":"bad")
-    );
+    // ✅ lodash 구버전 호환: Entry가 _.contains, _.findWhere를 기대하는 케이스 보정
+    if (r.ok && src.includes("/lodash.min.js")) {
+      try{
+        if (window._ && !_.contains) _.contains = _.includes;
+        if (window._ && !_.findWhere) _.findWhere = (arr, attrs) => _.find(arr, attrs);
+        bootLine("PATCH lodash: _.contains/_.findWhere ok", "ok");
+      }catch(e){
+        bootLine("PATCH lodash failed: "+String(e), "bad");
+      }
+    }
 
-    /* ======= 🔥 핵심 패치 (유일 수정) ======= */
-
+    // ✅ (유일 오류 해결 유지) sound-editor가 registExportFunction을 안 내보내면 noop 보강
     if(r.ok && src.endsWith("lib/external/sound/sound-editor.js")){
       try{
         if(window.EntrySoundEditor &&
@@ -138,16 +190,37 @@ async function boot(){
           bootLine("PATCH EntrySoundEditor.registExportFunction = noop","ok");
         }
       }catch(e){
-        bootLine("PATCH failed: "+String(e),"bad");
+        bootLine("PATCH sound-editor failed: "+String(e),"bad");
+      }
+    }
+
+    // ✅ EntryStatic 로컬 경로 강제(이미지/리소스 경로를 로컬로 유도)
+    if (r.ok && src.endsWith("extern/util/static.js")) {
+      try{
+        if (window.EntryStatic) {
+          // 일반적으로 EntryStatic.imagePath/mediaPath가 쓰임
+          window.EntryStatic.imagePath = BASE + "lib/entryjs/images/";
+          window.EntryStatic.mediaPath = BASE + "lib/entryjs/images/";
+          // 일부 빌드에서 static 경로명 다를 수 있어도, 절대경로 리라이터가 2중으로 보호
+          bootLine("PATCH EntryStatic.imagePath/mediaPath -> local", "ok");
+        }
+      }catch(e){
+        bootLine("PATCH EntryStatic failed: "+String(e),"bad");
       }
     }
   }
 
-  /* ============ GLOBAL CHECK ============ */
-
-  bootLine("Entry.init = "+
-    (window.Entry?typeof window.Entry.init:"N/A"),
-    (window.Entry&&typeof window.Entry.init==="function")?"ok":"bad");
+  // ✅ 글로벌 체크
+  bootLine("_.memoize = "+(window._ ? typeof _.memoize : "N/A"), window._?"ok":"bad");
+  bootLine("$.fn.jquery = "+(window.$ && $.fn ? $.fn.jquery : "N/A"), (window.$ && $.fn)?"ok":"bad");
+  bootLine("createjs = "+(typeof window.createjs), window.createjs?"ok":"bad");
+  bootLine("Lang = "+(typeof window.Lang), window.Lang?"ok":"bad");
+  bootLine("EntryTool = "+(typeof window.EntryTool), window.EntryTool?"ok":"bad");
+  bootLine("EntryVideoLegacy = "+(typeof window.EntryVideoLegacy), window.EntryVideoLegacy?"ok":"bad");
+  bootLine("EntryStatic = "+(typeof window.EntryStatic), window.EntryStatic?"ok":"bad");
+  bootLine("EntrySoundEditor = "+(typeof window.EntrySoundEditor), window.EntrySoundEditor?"ok":"bad");
+  bootLine("Entry.init = "+(window.Entry ? typeof window.Entry.init : "N/A"),
+    (window.Entry && typeof window.Entry.init==="function")?"ok":"bad");
 
   must(window._,"lodash(_)");
   must(window.$,"jQuery($)");
@@ -163,25 +236,27 @@ async function boot(){
 
   Entry.init(document.getElementById("entryContainer"),{
     type:"workspace",
-    libDir:BASE+"lib",
-    textCodingEnable:true
+    libDir: BASE + "lib",
+    textCodingEnable: true
   });
 
   Entry.loadProject();
-  document.getElementById("boot").remove();
+  const bootEl=document.getElementById("boot");
+  if(bootEl) bootEl.remove();
 }
 
 document.addEventListener("DOMContentLoaded",()=>{
   boot().catch(e=>{
     bootLine("Boot Error","bad");
-    bootLine(String(e&&e.stack?e.stack:e),"bad");
+    bootLine(String(e && e.stack ? e.stack : e),"bad");
   });
 });
 </script>
 </head>
 
 <body>
-<div id="entryContainer"></div>
-<div id="boot">Entry Offline Editor\nLoading…</div>
+  <div id="entryContainer"></div>
+  <div id="boot">Entry Offline Editor
+Loading…</div>
 </body>
 </html>
