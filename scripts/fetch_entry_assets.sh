@@ -36,12 +36,10 @@ curl_get() {
   local url="$1"
   local out="$2"
   mkdir -p "$(dirname "$out")"
-  # --fail makes curl exit non-zero on 4xx/5xx
   curl -L --compressed --retry 3 --retry-delay 1 --fail -o "$out" "$url"
 }
 
 fetch_one() {
-  # fetch_one OUT URL1 URL2 ...
   local out="$1"; shift
   mkdir -p "$(dirname "$out")"
 
@@ -60,14 +58,12 @@ fetch_one() {
   echo "Tried:"
   for url in "$@"; do echo " - $url"; done
   echo ""
-  return 0  # IMPORTANT: never fail the script
+  return 0
 }
 
 fetch_optional() {
-  # same as fetch_one but never counts as missing
   local out="$1"; shift
   fetch_one "$out" "$@" || true
-  # remove from fail log if present
   if [ -f "$FAIL_LOG" ]; then
     grep -vxF "$out" "$FAIL_LOG" > "$FAIL_LOG.tmp" 2>/dev/null || true
     mv -f "$FAIL_LOG.tmp" "$FAIL_LOG" 2>/dev/null || true
@@ -76,7 +72,6 @@ fetch_optional() {
 }
 
 run_bg() {
-  # run_bg OUT URL...
   fetch_one "$@" &
   while true; do
     local n
@@ -97,10 +92,9 @@ wait_all() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# NPM fallback extract helpers (for images/media completeness)
+# NPM fallback extract helpers
 # ─────────────────────────────────────────────────────────────
 npm_extract_to() {
-  # npm_extract_to PKG OUTDIR
   local pkg="$1"
   local outDir="$2"
   mkdir -p "$outDir"
@@ -141,7 +135,6 @@ copy_if_exists() {
 # ─────────────────────────────────────────────────────────────
 extract_css_urls() {
   local css="$1"
-  # url("...") / url('...') / url(...)
   sed -nE 's/.*url\(([^)]+)\).*/\1/p' "$css" 2>/dev/null \
     | sed -E 's/^["'\'']|["'\'']$//g' \
     | grep -vE '^(data:|https?:|//)' \
@@ -167,17 +160,12 @@ download_relative_to_css() {
   while read -r rel; do
     [ -z "$rel" ] && continue
     local target="$baseDir/$rel"
-
-    # already exists
     [ -f "$target" ] && continue
 
-    # convert to web path (relative to WWW)
     local webPath="${target#$WWW/}"
     webPath="$(printf "%s" "$webPath" | normpath_py)"
-    # if still empty, skip
     [ -z "${webPath:-}" ] && continue
 
-    # download candidates
     run_bg "$target" \
       "https://playentry.org/$webPath" \
       "https://entry-cdn.pstatic.net/$webPath"
@@ -193,7 +181,7 @@ log "WWW =$WWW"
 log "MAX_JOBS=$MAX_JOBS"
 echo ""
 
-# (A) Core JS libraries expected by Entry ecosystem
+# (A) Core JS libraries
 mkdir -p "$LIB/underscore" "$LIB/lodash/dist" "$LIB/codemirror" "$LIB/jquery" "$LIB/jquery-ui/ui/minified"
 
 run_bg "$LIB/underscore/underscore-min.js" \
@@ -216,7 +204,7 @@ run_bg "$LIB/jquery/jquery.min.js" \
 run_bg "$LIB/jquery-ui/ui/minified/jquery-ui.min.js" \
   "https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.10.4/jquery-ui.min.js"
 
-# (B) CreateJS (Entry Stage depends on createjs globals)
+# (B) CreateJS
 mkdir -p "$LIB/PreloadJS/lib" "$LIB/EaselJS/lib" "$LIB/SoundJS/lib"
 
 run_bg "$LIB/PreloadJS/lib/preloadjs-0.6.0.min.js" \
@@ -228,15 +216,13 @@ run_bg "$LIB/EaselJS/lib/easeljs-0.8.0.min.js" \
 run_bg "$LIB/SoundJS/lib/soundjs-0.6.0.min.js" \
   "https://code.createjs.com/soundjs-0.6.0.min.js"
 
-# FlashAudioPlugin is optional (HTML5 audio works without it)
 fetch_optional "$LIB/SoundJS/lib/flashaudioplugin-0.6.0.min.js" \
   "https://code.createjs.com/flashaudioplugin-0.6.0.min.js" &
 
-# (C) EntryJS / entry-tool / entry-paint from playentry
+# (C) EntryJS / entry-tool / entry-paint
 mkdir -p "$LIB/entryjs/dist" "$LIB/entryjs/extern/lang" "$LIB/entryjs/extern/util"
 mkdir -p "$LIB/entry-tool/dist" "$LIB/entry-paint/dist/static/js"
 
-# IMPORTANT: keep both candidate paths (some environments use entry-js, some entryjs)
 run_bg "$LIB/entryjs/dist/entry.min.js" \
   "https://playentry.org/lib/entry-js/dist/entry.min.js" \
   "https://playentry.org/lib/entryjs/dist/entry.min.js"
@@ -263,32 +249,31 @@ run_bg "$LIB/entryjs/extern/util/bignumber.min.js" \
 
 run_bg "$LIB/entry-tool/dist/entry-tool.js"  "https://playentry.org/lib/entry-tool/dist/entry-tool.js"
 run_bg "$LIB/entry-tool/dist/entry-tool.css" "https://playentry.org/lib/entry-tool/dist/entry-tool.css"
-
 run_bg "$LIB/entry-paint/dist/static/js/entry-paint.js" "https://playentry.org/lib/entry-paint/dist/static/js/entry-paint.js"
+
+# ✅ Legacy video module (EntryVideoLegacy) - REQUIRED by your Entry build
+mkdir -p "$LIB/module/legacy-video"
+run_bg "$LIB/module/legacy-video/index.js" \
+  "https://entry-cdn.pstatic.net/module/legacy-video/index.js" \
+  "https://playentry.org/module/legacy-video/index.js"
 
 wait_all
 
-# (D) Optional ws locales file (not required to run)
+# (D) ws locales optional
 mkdir -p "$JS/ws"
 fetch_optional "$JS/ws/locales.js" \
   "https://playentry.org/js/ws/locales.js" \
   "https://entry-cdn.pstatic.net/js/ws/locales.js"
 
-# ─────────────────────────────────────────────────────────────
-# [IMG FIX] Ensure images/media are present for UI (blocks/icons/object add)
-# - safest: extract npm packages and copy resource folders into www/lib/*
-# - also parse css files for url(...) and download missing relative files
-# ─────────────────────────────────────────────────────────────
+# (E) Ensure images/media exist (NPM fallback)
 big "NPM FALLBACK: extracting packages to ensure images/media exist"
 
 npm_extract_to "@entrylabs/entry"      "$WWW/.npm_entry_pkg"
 npm_extract_to "@entrylabs/entry-tool" "$WWW/.npm_entry_tool_pkg"
 npm_extract_to "@entrylabs/entry-paint" "$WWW/.npm_entry_paint_pkg"
 
-# Make sure lib/entryjs contains resource folders
 mkdir -p "$LIB/entryjs"
 
-# Copy candidate resource folders if found
 for cand in \
   "$WWW/.npm_entry_pkg/images" \
   "$WWW/.npm_entry_pkg/media" \
@@ -308,12 +293,10 @@ for cand in \
 do
   if [ -d "$cand" ]; then
     base="$(basename "$cand")"
-    # If cand is ".../extern", keep name extern
     copy_if_exists "$cand" "$LIB/entryjs/$base"
   fi
 done
 
-# Ensure entry-tool and entry-paint dist folders include their assets too
 if [ -d "$WWW/.npm_entry_tool_pkg/dist" ]; then
   mkdir -p "$LIB/entry-tool"
   copy_if_exists "$WWW/.npm_entry_tool_pkg/dist" "$LIB/entry-tool/dist"
@@ -324,10 +307,9 @@ if [ -d "$WWW/.npm_entry_paint_pkg/dist" ]; then
   copy_if_exists "$WWW/.npm_entry_paint_pkg/dist" "$LIB/entry-paint/dist"
 fi
 
-# Cleanup temp extracted packages
 rm -rf "$WWW/.npm_entry_pkg" "$WWW/.npm_entry_tool_pkg" "$WWW/.npm_entry_paint_pkg" >/dev/null 2>&1 || true
 
-# (E) CSS url(...) scan – download missing relative assets referenced by css
+# (F) CSS url scan
 big "CSS url(...) asset scan (download missing relative files)"
 for css in \
   "$LIB/entryjs/dist/entry.css" \
@@ -340,9 +322,7 @@ do
 done
 wait_all
 
-# (F) Alias directories (some code expects entry-js path)
-# Your index.html uses ./lib/entryjs; some third-party expects entry-js.
-# Create aliases both ways if needed.
+# (G) Alias dir entry-js <-> entryjs
 if [ -d "$LIB/entryjs" ] && [ ! -d "$LIB/entry-js" ]; then
   copy_if_exists "$LIB/entryjs" "$LIB/entry-js"
 fi
@@ -350,9 +330,7 @@ if [ -d "$LIB/entry-js" ] && [ ! -d "$LIB/entryjs" ]; then
   copy_if_exists "$LIB/entry-js" "$LIB/entryjs"
 fi
 
-# ─────────────────────────────────────────────────────────────
-# SUMMARY (never exit non-zero)
-# ─────────────────────────────────────────────────────────────
+# SUMMARY
 if [ -s "$FAIL_LOG" ]; then
   COUNT="$(sort -u "$FAIL_LOG" | wc -l | tr -d ' ')"
   big "FETCH SUMMARY: $COUNT file(s) may be missing (script continued)"
