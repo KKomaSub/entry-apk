@@ -1,170 +1,53 @@
-name: build-debug-apk
+name: android-debug
 
 on:
-  push:
-    branches: [ "main", "master" ]
-  workflow_dispatch: {}
-
-permissions:
-  contents: read
+  workflow_dispatch:
 
 jobs:
-  build:
+  build-debug-apk:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # -----------------------------
-      # Node (⚠️ lockfile 없어도 실패하지 않게 cache 사용 안함)
-      # -----------------------------
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "18"
+          cache: "npm"
 
-      # -----------------------------
-      # Install deps (lockfile 없어도 동작)
-      # -----------------------------
-      - name: Install dependencies (safe)
-        shell: bash
+      - name: Install deps
+        run: npm install --legacy-peer-deps
+
+      - name: Fetch Entry assets into www
+        run: npm run fetch
+
+      - name: Sanity check www files
         run: |
           set -e
-          echo "=== package.json scripts ==="
-          node -e "try{const p=require('./package.json');console.log(p.scripts||{});}catch(e){console.log('no package.json');process.exit(2)}"
+          ls -al www || true
+          echo "=== must exist ==="
+          test -f www/index.html
+          test -f www/overrides.css
+          test -f www/lib/lodash/dist/lodash.min.js
+          test -f www/lib/jquery/jquery.min.js
+          test -f www/lib/entryjs/dist/entry.min.js
+          test -f www/lib/entry-tool/dist/entry-tool.js
+          test -f www/lib/entry-paint/dist/static/js/entry-paint.js
+          test -f www/lib/module/legacy-video/index.js
+          echo "OK: www looks complete"
 
-          npm install --legacy-peer-deps
+      - name: Capacitor sync (MUST be after fetch)
+        run: npx cap sync android
 
-          # capacitor.config.ts 케이스 대비: typescript 없으면 cap이 죽음
-          node -e "const p=require('./package.json'); const dev=(p.devDependencies||{}); const dep=(p.dependencies||{}); process.exit((dev.typescript||dep.typescript)?0:1);" \
-            || npm install -D typescript --legacy-peer-deps
-
-      # -----------------------------
-      # Fetch Entry assets (있으면 실행 / 없으면 스킵)
-      # -----------------------------
-      - name: Fetch entry assets (if available)
-        shell: bash
+      - name: Build debug APK
         run: |
-          set +e
-          if [ -f scripts/fetch_entry_assets.sh ]; then
-            chmod +x scripts/fetch_entry_assets.sh
-          fi
-
-          node -e "const p=require('./package.json'); process.exit((p.scripts&&p.scripts.fetch)?0:1);"
-          HAS_FETCH="$?"
-          if [ "$HAS_FETCH" -eq 0 ]; then
-            echo "Running: npm run fetch"
-            npm run fetch
-            echo "fetch exit=$?"
-          else
-            if [ -f scripts/fetch_entry_assets.sh ]; then
-              echo "No npm script 'fetch', running shell directly"
-              MAX_JOBS=6 bash scripts/fetch_entry_assets.sh
-              echo "fetch_entry_assets.sh exit=$?"
-            else
-              echo "WARN: no fetch script found (skip)"
-            fi
-          fi
-          exit 0
-
-      # -----------------------------
-      # bundle/assets/build 단계 (있으면만 실행)
-      # -----------------------------
-      - name: Build web bundle/assets (optional)
-        shell: bash
-        run: |
-          set +e
-          node -e "const p=require('./package.json'); console.log('scripts=',Object.keys(p.scripts||{}));"
-
-          for s in bundle assets build; do
-            node -e "const p=require('./package.json'); process.exit((p.scripts&&p.scripts['$s'])?0:1);"
-            if [ "$?" -eq 0 ]; then
-              echo "Running: npm run $s"
-              npm run "$s"
-              echo "npm run $s exit=$?"
-            else
-              echo "Skip: npm run $s (missing)"
-            fi
-          done
-          exit 0
-
-      # -----------------------------
-      # Capacitor Android 준비
-      # -----------------------------
-      - name: Capacitor prepare android
-        shell: bash
-        run: |
-          set -e
-          if [ ! -f capacitor.config.json ] && [ ! -f capacitor.config.ts ] && [ ! -f capacitor.config.js ]; then
-            echo "WARN: capacitor config not found (capacitor.config.*)"
-          fi
-
-          if [ ! -d android ]; then
-            echo "android/ not found -> npx cap add android"
-            npx cap add android || true
-          fi
-
-          echo "Running: npx cap sync android"
-          npx cap sync android
-
-      # -----------------------------
-      # Java 17
-      # -----------------------------
-      - name: Setup JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      # -----------------------------
-      # Gradle build debug
-      # -----------------------------
-      - name: Build Debug APK
-        shell: bash
-        run: |
-          set -e
-          if [ ! -d android ]; then
-            echo "ERROR: android folder missing"
-            exit 3
-          fi
-
           cd android
-          if [ -f gradlew ]; then
-            chmod +x gradlew
-            ./gradlew --version
-            ./gradlew assembleDebug --stacktrace --info
-          else
-            echo "ERROR: gradlew not found in android/"
-            ls -al
-            exit 4
-          fi
+          ./gradlew assembleDebug
 
-      # -----------------------------
-      # Outputs 탐색 (항상 실행)
-      # -----------------------------
-      - name: Locate outputs
-        if: always()
-        shell: bash
-        run: |
-          echo "=== find APK ==="
-          find android -maxdepth 10 -type f -name "*.apk" -print || true
-          echo "=== find AAB ==="
-          find android -maxdepth 10 -type f -name "*.aab" -print || true
-          echo "=== list outputs ==="
-          ls -al android/app/build/outputs || true
-          ls -al android/app/build/outputs/apk || true
-          ls -al android/app/build/outputs/apk/debug || true
-
-      # -----------------------------
-      # 업로드 (항상 실행)
-      # -----------------------------
-      - name: Upload artifacts (APK/AAB)
-        if: always()
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: android-build
-          path: |
-            android/**/build/outputs/**/*.apk
-            android/**/build/outputs/**/*.aab
-          if-no-files-found: warn
+          name: app-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
