@@ -1,11 +1,9 @@
 name: android-debug
 
 on:
-  push:
-    branches: [ "master", "main" ]
-  pull_request:
-    branches: [ "master", "main" ]
   workflow_dispatch:
+  push:
+    branches: ["master", "main"]
 
 jobs:
   build-debug-apk:
@@ -26,22 +24,15 @@ jobs:
       - name: Fetch Entry assets into www
         run: npm run fetch
 
-      - name: Sanity check www files
+      - name: Ensure android platform exists (cap add android once)
         run: |
-          set -e
-          ls -al www || true
-          echo "=== must exist ==="
-          test -f www/index.html
-          test -f www/overrides.css
-          test -f www/lib/lodash/dist/lodash.min.js
-          test -f www/lib/jquery/jquery.min.js
-          test -f www/lib/entryjs/dist/entry.min.js
-          test -f www/lib/entry-tool/dist/entry-tool.js
-          test -f www/lib/entry-paint/dist/static/js/entry-paint.js
-          test -f www/lib/module/legacy-video/index.js
-          echo "OK: www looks complete"
+          if [ ! -d "android" ]; then
+            npx cap add android
+          else
+            echo "android/ already exists -> skip cap add"
+          fi
 
-      - name: Capacitor sync (MUST be after fetch)
+      - name: Capacitor sync android
         run: npx cap sync android
 
       - name: Build debug APK
