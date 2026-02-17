@@ -1,115 +1,86 @@
-name: android-debug
+name: Build Debug APK
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
+      - master
+  workflow_dispatch:
 
 jobs:
   build-debug-apk:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ------------------------------
+      # Node 환경
+      # ------------------------------
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: 18
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           npm install --legacy-peer-deps
 
-      - name: Ensure icon source (assets/icon.png)
+      # ------------------------------
+      # 웹 자산 fetch
+      # ------------------------------
+      - name: Fetch entry assets
         run: |
-          mkdir -p assets
-          if [ ! -f assets/icon.png ]; then
-            echo "Downloading icon.png ..."
-            curl -L --fail -o assets/icon.png "https://img.kkomaweb.com/api/image?id=cK9YkGqw&name=1000025550.png"
-          fi
-          ls -al assets/icon.png
-
-      - name: Fetch Entry assets (offline vendoring)
-        run: |
-          bash scripts/fetch_entry_assets.sh
-
-      - name: Make JS bundle
-        run: |
-          npm run bundle
-
-      # ✅ 아이콘/스플래시 생성은 cap sync 직전에 (가장 안전)
-      - name: Generate Android icons/splash
-        run: |
-          npx @capacitor/assets generate --android
-
-      - name: Setup Java (17)
-        uses: actions/setup-java@v4
-        with:
-          distribution: "temurin"
-          java-version: "17"
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Capacitor CLI
-        run: |
-          npm i -g @capacitor/cli
-
-      - name: Add Android platform (if missing) and sync
-        run: |
-          if [ ! -d "android" ]; then
-            npx cap add android
-          fi
-          npx cap sync android
-
-      - name: Build Debug APK
-        run: |
-          cd android
-          ./gradlew assembleDebug
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: EntryOffline-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk          npm run assets
-
-      - name: Fetch Entry assets (offline vendoring)
-        run: |
+          chmod +x scripts/fetch_entry_assets.sh
           npm run fetch
 
-      - name: Make JS bundle
+      # ------------------------------
+      # Android 빌드 준비
+      # ------------------------------
+      - name: Install Capacitor
         run: |
-          npm run bundle
-
-      - name: Setup Java (17)
-        uses: actions/setup-java@v4
-        with:
-          distribution: "temurin"
-          java-version: "17"
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Capacitor CLI
-        run: |
-          npm i -g @capacitor/cli
-
-      - name: Add Android platform (if missing) and sync
-        run: |
-          if [ ! -d "android" ]; then
-            npx cap add android
-          fi
           npx cap sync android
 
+      # ------------------------------
+      # Java 17 (AGP 8+ 대응)
+      # ------------------------------
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # ------------------------------
+      # Gradle build
+      # ------------------------------
       - name: Build Debug APK
         run: |
           cd android
-          ./gradlew assembleDebug
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
 
-      - name: Upload APK artifact
+      # ------------------------------
+      # APK 위치 디버깅 출력
+      # ------------------------------
+      - name: Locate build outputs
+        run: |
+          echo "=== Searching APK ==="
+          find android -type f -name "*.apk" -maxdepth 8 || true
+          echo "=== Searching AAB ==="
+          find android -type f -name "*.aab" -maxdepth 8 || true
+          echo "=== Output directories ==="
+          ls -al android/app/build/outputs || true
+          ls -al android/app/build/outputs/apk || true
+          ls -al android/app/build/outputs/apk/debug || true
+
+      # ------------------------------
+      # 아티팩트 업로드 (자동 탐색)
+      # ------------------------------
+      - name: Upload APK/AAB
         uses: actions/upload-artifact@v4
         with:
-          name: EntryOffline-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: android-build
+          path: |
+            android/**/build/outputs/**/*.apk
+            android/**/build/outputs/**/*.aab
