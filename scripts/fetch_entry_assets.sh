@@ -1,197 +1,293 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -u
+
+# ===============================
+# Fetch Entry assets (offline vendoring)
+# - parallel downloads (MAX_JOBS=5)
+# - downloads core libs + entry assets
+# - scans CSS url(...) and fetches referenced files (images/fonts)
+# - optional files don't fail build
+# ===============================
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WWW="$ROOT/www"
-MAX_JOBS=5
+WWW="${ROOT}/www"
+MAX_JOBS="${MAX_JOBS:-5}"
 
-FAILED=0
-log(){ echo "[$(date +'%H:%M:%S')] $*"; }
+ENTRY_ORIGIN="https://playentry.org"
+ENTRY_CDN="https://entry-cdn.pstatic.net"
+CDNJS="https://cdnjs.cloudflare.com/ajax/libs"
+CREATEJS="https://code.createjs.com"
 
-mkdir -p "$WWW" "$WWW/lib" "$WWW/js/ws"
+mkdir -p "${WWW}"
+mkdir -p "${WWW}/lib" "${WWW}/js"
 
-# -----------------------
-# 병렬 제한
-# -----------------------
-wait_jobs() {
-  while [ "$(jobs -r | wc -l | tr -d ' ')" -ge "$MAX_JOBS" ]; do
-    sleep 0.15
-  done
+LOG() { echo "[$(date +%H:%M:%S)] $*"; }
+BANNER() {
+  echo
+  echo "████████████████████████████████████████████████████████████"
+  echo "🚨🚨🚨 $*"
+  echo "████████████████████████████████████████████████████████████"
+}
+ERR_BIG() { BANNER "$*"; }
+
+# ---- curl helper ----
+curl_dl() {
+  local url="$1" out="$2"
+  mkdir -p "$(dirname "$out")"
+  # -f fail on 4xx/5xx, -L follow
+  curl -fL --retry 3 --retry-delay 1 --connect-timeout 15 --max-time 180 \
+    -H "Cache-Control: no-cache" \
+    -o "$out" "$url"
 }
 
-# -----------------------
-# 병렬 fetch (실패해도 계속)
-# -----------------------
-fetch() {
-  local url="$1"
-  local out="$2"
-  (
+# ---- job queue file ----
+QUEUE_FILE="$(mktemp)"
+trap 'rm -f "$QUEUE_FILE"' EXIT
+
+# line format: URL<TAB>DEST<TAB>OPTIONAL(0/1)
+add_job() {
+  local url="$1" dest="$2" opt="${3:-0}"
+  printf "%s\t%s\t%s\n" "$url" "$dest" "$opt" >> "$QUEUE_FILE"
+}
+
+# ---- run jobs in parallel (xargs -P) ----
+run_jobs() {
+  local missing=0
+  local total
+  total="$(wc -l < "$QUEUE_FILE" | tr -d ' ')"
+  LOG "Queued ${total} download(s), MAX_JOBS=${MAX_JOBS}"
+
+  # process
+  cat "$QUEUE_FILE" | xargs -P "$MAX_JOBS" -n 1 -I {} bash -lc '
+    line="{}"
+    url="$(printf "%s" "$line" | cut -f1)"
+    out="$(printf "%s" "$line" | cut -f2)"
+    opt="$(printf "%s" "$line" | cut -f3)"
     mkdir -p "$(dirname "$out")"
-    if curl -fsSL --retry 3 --retry-delay 1 "$url" -o "$out"; then
-      log "OK   -> $out"
+    echo "[DL] $url -> $out"
+    if curl -fL --retry 3 --retry-delay 1 --connect-timeout 15 --max-time 180 \
+        -H "Cache-Control: no-cache" \
+        -o "$out" "$url" >/dev/null 2>&1; then
+      echo "[OK] $out"
+      exit 0
     else
-      echo "████████████████████████████████████████████████████████████"
-      echo "🚨🚨🚨 MISS $url"
-      echo "████████████████████████████████████████████████████████████"
-      FAILED=$((FAILED+1))
+      if [ "$opt" = "1" ]; then
+        echo "[MISS(opt)] $url"
+        exit 0
+      fi
+      echo "[MISS] $url"
+      exit 9
     fi
-  ) &
-  wait_jobs
+  ' || missing=1
+
+  rm -f "$QUEUE_FILE"
+  touch "$QUEUE_FILE"
+
+  if [ "$missing" = "1" ]; then
+    ERR_BIG "Some required download(s) failed"
+    return 1
+  fi
+  return 0
 }
 
-# -----------------------
-# www 기본 파일 보장
-# -----------------------
-mkdir -p "$WWW"
-if [ ! -f "$WWW/overrides.css" ]; then
-  cat > "$WWW/overrides.css" <<'CSS'
-/* 화면 깨짐/크기 보정용 */
-html, body { height:100%; }
-#entryContainer { width:100%; height:100%; }
-CSS
-  log "WROTE $WWW/overrides.css"
-fi
+# ---- CSS url(...) scanner ----
+# Fetch relative assets referenced by CSS (images/fonts). Works for:
+#   url(../images/a.png)  url(/lib/entryjs/images/a.png)  url(images/a.png)
+scan_css_urls_and_fetch() {
+  local css_path="$1"
+  [ -f "$css_path" ] || return 0
 
-# index.html은 이미 갖고 계시면 그대로 두고, 없을 때만 생성
-if [ ! -f "$WWW/index.html" ]; then
-  cat > "$WWW/index.html" <<'HTML'
-<!doctype html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Entry Offline Editor</title>
-  <link rel="stylesheet" href="./lib/entry-tool/dist/entry-tool.css" />
-  <link rel="stylesheet" href="./lib/entryjs/dist/entry.css" />
-  <link rel="stylesheet" href="./lib/codemirror/codemirror.css" />
-  <link rel="stylesheet" href="./overrides.css" />
-</head>
-<body style="margin:0; height:100%; overflow:hidden;">
-  <div id="entryContainer" style="height:100%"></div>
-  <script src="./js/ws/locales.js"></script>
+  LOG "Scan CSS url(...): ${css_path}"
 
-  <script src="./lib/lodash/dist/lodash.min.js"></script>
-  <script src="./lib/jquery/jquery.min.js"></script>
-  <script src="./lib/jquery-ui/ui/minified/jquery-ui.min.js"></script>
+  # Extract url(...) values, remove quotes, ignore data:
+  local urls
+  urls="$(perl -ne '
+    while (m/url\(([^)]+)\)/g) {
+      my $u=$1;
+      $u =~ s/^\s+|\s+$//g;
+      $u =~ s/^["'\'']|["'\'']$//g;
+      next if $u =~ /^data:/;
+      print "$u\n";
+    }
+  ' "$css_path" | sort -u)"
 
-  <script src="./lib/PreloadJS/lib/preloadjs-0.6.0.min.js"></script>
-  <script src="./lib/EaselJS/lib/easeljs-0.8.0.min.js"></script>
-  <script src="./lib/SoundJS/lib/soundjs-0.6.0.min.js"></script>
+  [ -n "$urls" ] || return 0
 
-  <script src="./lib/velocity/velocity.min.js"></script>
+  local css_dir rel out url
+  css_dir="$(dirname "$css_path")"
 
-  <script src="./lib/codemirror/codemirror.js"></script>
-  <script src="./lib/codemirror/vim.js"></script>
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
 
-  <script src="./lib/entry-tool/dist/entry-tool.js"></script>
+    # absolute path starting with /
+    if [[ "$rel" == /* ]]; then
+      url="${ENTRY_ORIGIN}${rel}"
+      out="${WWW}${rel}"
+    elif [[ "$rel" =~ ^https?:// ]]; then
+      url="$rel"
+      # map to www/lib/external_http/... (avoid weird path)
+      out="${WWW}/lib/_ext/$(echo "$rel" | sed -E 's#^https?://##' | tr "?&=" "___")"
+    else
+      # relative to css file directory
+      url="${ENTRY_ORIGIN}/$(realpath -m --relative-to="${WWW}" "${css_dir}/${rel}" | sed 's#^\.\./##')"
+      # but better: output to same relative dir under www
+      out="$(realpath -m "${css_dir}/${rel}")"
+      # If out escapes WWW, clamp it under WWW/lib/_cssrel/
+      if [[ "$out" != "$WWW"* ]]; then
+        out="${WWW}/lib/_cssrel/${rel}"
+      fi
+    fi
 
-  <script src="./lib/entryjs/extern/lang/ko.js"></script>
-  <script src="./lib/entryjs/extern/util/static.js"></script>
-  <script src="./lib/entryjs/extern/util/handle.js"></script>
-  <script src="./lib/entryjs/extern/util/bignumber.min.js"></script>
+    # queue as optional (some urls may be dead)
+    add_job "$url" "$out" 1
+  done <<< "$urls"
+}
 
-  <script src="./lib/module/legacy-video/index.js"></script>
-  <script src="./lib/external/sound/sound-editor.js"></script>
+# ---- create required dirs ----
+mkdir -p \
+  "${WWW}/lib/lodash/dist" \
+  "${WWW}/lib/jquery" \
+  "${WWW}/lib/jquery-ui/ui/minified" \
+  "${WWW}/lib/PreloadJS/lib" \
+  "${WWW}/lib/EaselJS/lib" \
+  "${WWW}/lib/SoundJS/lib" \
+  "${WWW}/lib/velocity" \
+  "${WWW}/lib/codemirror" \
+  "${WWW}/lib/entry-tool/dist" \
+  "${WWW}/lib/entryjs/dist" \
+  "${WWW}/lib/entryjs/extern/lang" \
+  "${WWW}/lib/entryjs/extern/util" \
+  "${WWW}/lib/module/legacy-video" \
+  "${WWW}/lib/entry-paint/dist/static/js" \
+  "${WWW}/lib/external/sound" \
+  "${WWW}/js/ws"
 
-  <script src="./lib/entryjs/dist/entry.min.js"></script>
-  <script src="./lib/entry-paint/dist/static/js/entry-paint.js"></script>
+LOG "=== Fetch Entry assets (offline vendoring) ==="
+LOG "ROOT=${ROOT}"
+LOG "WWW =${WWW}"
+LOG "MAX_JOBS=${MAX_JOBS}"
 
-  <script>
-    Entry.init(document.getElementById("entryContainer"), {
-      type: "workspace",
-      libDir: "./lib",
-      textCodingEnable: true
-    });
-    Entry.loadProject();
-  </script>
-</body>
-</html>
-HTML
-  log "WROTE $WWW/index.html"
-fi
+# ===============================
+# 1) Core libs (cdnjs/createjs)
+# ===============================
+add_job "${CDNJS}/lodash.js/4.17.10/lodash.min.js" \
+  "${WWW}/lib/lodash/dist/lodash.min.js" 0
 
-log "=== Fetch Entry assets (parallel x$MAX_JOBS) ==="
-log "ROOT=$ROOT"
-log "WWW =$WWW"
+add_job "${CDNJS}/jquery/1.9.1/jquery.min.js" \
+  "${WWW}/lib/jquery/jquery.min.js" 0
 
-# -----------------------
-# 1) entryjs 전체 통째 복사 (@entrylabs/entry)
-# -----------------------
-rm -rf "$WWW/lib/entryjs" "$WWW/.entry_pkg"
-mkdir -p "$WWW/.entry_pkg"
+add_job "${CDNJS}/jqueryui/1.10.4/jquery-ui.min.js" \
+  "${WWW}/lib/jquery-ui/ui/minified/jquery-ui.min.js" 0
 
-log "NPM pack @entrylabs/entry (full copy)"
-PKG_TGZ="$(npm pack @entrylabs/entry | tail -n1)"
-tar -xzf "$PKG_TGZ" -C "$WWW/.entry_pkg"
-rm -f "$PKG_TGZ"
+add_job "${CDNJS}/velocity/1.2.3/velocity.min.js" \
+  "${WWW}/lib/velocity/velocity.min.js" 0
 
-# package/* -> lib/entryjs
-cp -r "$WWW/.entry_pkg/package" "$WWW/lib/entryjs"
-rm -rf "$WWW/.entry_pkg"
+add_job "${CDNJS}/codemirror/5.65.16/codemirror.min.css" \
+  "${WWW}/lib/codemirror/codemirror.css" 0
+add_job "${CDNJS}/codemirror/5.65.16/codemirror.min.js" \
+  "${WWW}/lib/codemirror/codemirror.js" 0
+add_job "${CDNJS}/codemirror/5.65.16/keymap/vim.min.js" \
+  "${WWW}/lib/codemirror/vim.js" 1
 
-# -----------------------
-# 2) 나머지 필수 파일들 다운로드 (MISS 나면 화면 깨짐/EntryTool undefined)
-# -----------------------
+add_job "${CREATEJS}/preloadjs-0.6.0.min.js" \
+  "${WWW}/lib/PreloadJS/lib/preloadjs-0.6.0.min.js" 0
+add_job "${CREATEJS}/easeljs-0.8.0.min.js" \
+  "${WWW}/lib/EaselJS/lib/easeljs-0.8.0.min.js" 0
+add_job "${CREATEJS}/soundjs-0.6.0.min.js" \
+  "${WWW}/lib/SoundJS/lib/soundjs-0.6.0.min.js" 0
+# flashaudioplugin은 종종 404임 (optional)
+add_job "${CREATEJS}/flashaudioplugin-0.6.0.min.js" \
+  "${WWW}/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js" 1
 
-# entry-tool / entry-paint (playentry에서 직접)
-fetch "https://playentry.org/lib/entry-tool/dist/entry-tool.js"  "$WWW/lib/entry-tool/dist/entry-tool.js"
-fetch "https://playentry.org/lib/entry-tool/dist/entry-tool.css" "$WWW/lib/entry-tool/dist/entry-tool.css"
-fetch "https://playentry.org/lib/entry-paint/dist/static/js/entry-paint.js" "$WWW/lib/entry-paint/dist/static/js/entry-paint.js"
+# ===============================
+# 2) Entry assets (playentry)
+# ===============================
+# entryjs dist + extern
+add_job "${ENTRY_ORIGIN}/lib/entry-js/dist/entry.min.js" \
+  "${WWW}/lib/entryjs/dist/entry.min.js" 0
+add_job "${ENTRY_ORIGIN}/lib/entry-js/dist/entry.css" \
+  "${WWW}/lib/entryjs/dist/entry.css" 0
+add_job "${ENTRY_ORIGIN}/lib/entry-js/extern/lang/ko.js" \
+  "${WWW}/lib/entryjs/extern/lang/ko.js" 0
+add_job "${ENTRY_ORIGIN}/lib/entry-js/extern/util/static.js" \
+  "${WWW}/lib/entryjs/extern/util/static.js" 0
+add_job "${ENTRY_ORIGIN}/lib/entry-js/extern/util/handle.js" \
+  "${WWW}/lib/entryjs/extern/util/handle.js" 0
+add_job "${ENTRY_ORIGIN}/lib/entry-js/extern/util/bignumber.min.js" \
+  "${WWW}/lib/entryjs/extern/util/bignumber.min.js" 0
 
-# locales (없으면 일부 UI/문구 깨질 수 있음)
-fetch "https://playentry.org/js/ws/locales.js" "$WWW/js/ws/locales.js"
+# entry-tool
+add_job "${ENTRY_ORIGIN}/lib/entry-tool/dist/entry-tool.js" \
+  "${WWW}/lib/entry-tool/dist/entry-tool.js" 0
+add_job "${ENTRY_ORIGIN}/lib/entry-tool/dist/entry-tool.css" \
+  "${WWW}/lib/entry-tool/dist/entry-tool.css" 0
 
-# legacy-video (EntryVideoLegacy 필요)
-fetch "https://entry-cdn.pstatic.net/module/legacy-video/index.js" "$WWW/lib/module/legacy-video/index.js"
+# entry-paint
+add_job "${ENTRY_ORIGIN}/lib/entry-paint/dist/static/js/entry-paint.js" \
+  "${WWW}/lib/entry-paint/dist/static/js/entry-paint.js" 0
 
-# lodash/jquery 등 (entryjs가 기대하는 것들)
-fetch "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.10/lodash.min.js" "$WWW/lib/lodash/dist/lodash.min.js"
-fetch "https://cdnjs.cloudflare.com/ajax/libs/jquery/1.9.1/jquery.min.js" "$WWW/lib/jquery/jquery.min.js"
-fetch "https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.10.4/jquery-ui.min.js" "$WWW/lib/jquery-ui/ui/minified/jquery-ui.min.js"
+# legacy video module (cdn)
+add_job "${ENTRY_CDN}/module/legacy-video/index.js" \
+  "${WWW}/lib/module/legacy-video/index.js" 0
 
-# CreateJS
-fetch "https://code.createjs.com/preloadjs-0.6.0.min.js" "$WWW/lib/PreloadJS/lib/preloadjs-0.6.0.min.js"
-fetch "https://code.createjs.com/easeljs-0.8.0.min.js" "$WWW/lib/EaselJS/lib/easeljs-0.8.0.min.js"
-fetch "https://code.createjs.com/soundjs-0.6.0.min.js" "$WWW/lib/SoundJS/lib/soundjs-0.6.0.min.js"
+# locales
+add_job "${ENTRY_ORIGIN}/js/ws/locales.js" \
+  "${WWW}/js/ws/locales.js" 1
 
-# flashaudioplugin은 없어도 동작 가능(옵션)
-fetch "https://code.createjs.com/flashaudioplugin-0.6.0.min.js" "$WWW/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js" || true
+# sound editor (여러 후보)
+add_job "${ENTRY_ORIGIN}/lib/external/sound/sound-editor.js" \
+  "${WWW}/lib/external/sound/sound-editor.js" 1
+add_job "${ENTRY_CDN}/external/sound/sound-editor.js" \
+  "${WWW}/lib/external/sound/sound-editor.js" 1
 
-# velocity
-fetch "https://cdnjs.cloudflare.com/ajax/libs/velocity/1.2.3/velocity.min.js" "$WWW/lib/velocity/velocity.min.js"
+# ===============================
+# 3) Download phase 1
+# ===============================
+run_jobs || exit 1
 
-# CodeMirror (textCodingEnable 켜면 필수)
-fetch "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" "$WWW/lib/codemirror/codemirror.css"
-fetch "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js" "$WWW/lib/codemirror/codemirror.js"
-fetch "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/keymap/vim.min.js" "$WWW/lib/codemirror/vim.js" || true
-
-# -----------------------
-# 3) sound-editor.js (없으면 EntrySoundEditor 관련 크래시)
-# - 일단은 "stub(비활성)"로라도 만들어두면 Entry가 죽진 않음
-# -----------------------
-mkdir -p "$WWW/lib/external/sound"
-if [ ! -f "$WWW/lib/external/sound/sound-editor.js" ]; then
-  cat > "$WWW/lib/external/sound/sound-editor.js" <<'JS'
-window.EntrySoundEditor = window.EntrySoundEditor || {};
-// Entry가 내부에서 호출하는 인터페이스만 최소로 제공 (죽지 않게)
-window.EntrySoundEditor.renderSoundEditor = function(){ return null; };
+# ===============================
+# 4) If sound-editor missing, create minimal stub (keeps Entry alive)
+# ===============================
+if [ ! -f "${WWW}/lib/external/sound/sound-editor.js" ]; then
+  ERR_BIG "sound-editor.js missing -> generating safe stub (sound editor disabled)"
+  mkdir -p "${WWW}/lib/external/sound"
+  cat > "${WWW}/lib/external/sound/sound-editor.js" <<'JS'
+/**
+ * EntrySoundEditor stub
+ * - keep Entry from crashing
+ * - provide required exports used by EntryJS bundles:
+ *   - renderSoundEditor
+ *   - registExportFunction
+ */
+(function (g) {
+  g.EntrySoundEditor = g.EntrySoundEditor || {};
+  g.EntrySoundEditor.renderSoundEditor = function () { /* disabled */ };
+  g.EntrySoundEditor.registExportFunction = function () { /* noop */ };
+})(typeof window !== "undefined" ? window : globalThis);
 JS
-  log "WROTE $WWW/lib/external/sound/sound-editor.js (stub)"
 fi
 
-# -----------------------
-# 병렬 다운로드 끝까지 대기
-# -----------------------
-wait
+# ===============================
+# 5) CSS url(...) scan & fetch referenced assets
+# ===============================
+BANNER "CSS url(...) asset scan (download missing relative files)"
+scan_css_urls_and_fetch "${WWW}/lib/entryjs/dist/entry.css"
+scan_css_urls_and_fetch "${WWW}/lib/entry-tool/dist/entry-tool.css"
+scan_css_urls_and_fetch "${WWW}/lib/codemirror/codemirror.css"
 
-if [ "$FAILED" -gt 0 ]; then
-  echo "████████████████████████████████████████████████████"
-  echo "🚨 FETCH SUMMARY: $FAILED file(s) missing (script continued)"
-  echo "████████████████████████████████████████████████████"
-else
-  log "✅ FETCH SUMMARY: all downloads OK"
+# Download referenced assets (optional-only queue)
+run_jobs || true
+
+# ===============================
+# 6) Ensure alias folder exists (some builds refer /lib/entry-js/)
+# ===============================
+if [ ! -d "${WWW}/lib/entry-js" ]; then
+  cp -R "${WWW}/lib/entryjs" "${WWW}/lib/entry-js" 2>/dev/null || true
 fi
 
-# 마지막: www가 비었다고 느껴지면 여기서 확인 가능
-log "WWW listing (top):"
-ls -al "$WWW" | sed -n '1,120p' || true
+# ===============================
+# 7) Summary
+# ===============================
+LOG "✅ FETCH SUMMARY: completed"
+LOG "WWW=${WWW}"
+exit 0
