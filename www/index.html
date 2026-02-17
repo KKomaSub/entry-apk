@@ -136,6 +136,20 @@
         const r = await loadJS(src);
         bootLine((r.ok ? "OK   JS   " : (optional ? "MISS(opt) " : "MISS     ")) + src,
           r.ok ? "ok" : (optional ? "dim" : "bad"));
+
+        // ✅✅✅ [유일 변경] EntryTool의 registExportFunction이 없을 때만 "노옵"으로 보강
+        // - 목적: TypeError: (0 , r.registExportFunction) is not a function 방지
+        // - 타이밍: entry-tool.js 로드 직후 / entry.min.js 로드 전이어야 함
+        if (r.ok && src.endsWith("lib/entry-tool/dist/entry-tool.js")) {
+          try {
+            if (window.EntryTool && typeof window.EntryTool.registExportFunction !== "function") {
+              window.EntryTool.registExportFunction = function () { /* noop */ };
+              bootLine("PATCH EntryTool.registExportFunction = noop", "ok");
+            }
+          } catch (e) {
+            bootLine("PATCH failed: " + String(e), "bad");
+          }
+        }
       }
 
       // ✅ 글로벌 체크
