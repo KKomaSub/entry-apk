@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 # scripts/fetch_entry_assets.sh
+# - 병렬 다운로드 (MAX_JOBS)
+# - 404여도 중단 안 함(크게 로그 + 계속)
+# - CreateJS는 code.createjs.com에서 받음 (createjs 전역 안정)
+# - flashaudioplugin은 optional (없어도 정상)
+# - lodash는 고정 경로로 저장: www/lib/lodash.min.js (index.html과 1:1 매칭)
+# - npm fallback: @entrylabs/entry 통째로 받아서 images/media 등 리소스 보강
+
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -45,19 +52,24 @@ fetch_one() {
 
   add_path_variants() {
     local p="$1"
+
+    # CDN 우선
     add_cand "$P2$p"
     add_cand "$P1$p"
 
+    # /lib/js/... -> /js/...
     if [[ "$p" == /lib/js/* ]]; then
       local p2="${p#/lib}"
       add_cand "$P2$p2"; add_cand "$P1$p2"
     fi
 
+    # /lib/module/... -> /module/...
     if [[ "$p" == /lib/module/* ]]; then
       local p2="${p#/lib}"
       add_cand "$P2$p2"; add_cand "$P1$p2"
     fi
 
+    # /lib/entryjs/... <-> /lib/entry-js/...
     if [[ "$p" == /lib/entryjs/* ]]; then
       local p2="${p/\/lib\/entryjs\//\/lib\/entry-js\/}"
       add_cand "$P2$p2"; add_cand "$P1$p2"
@@ -106,7 +118,7 @@ fetch_one() {
   return 0
 }
 
-# ✅ optional: 실패해도 FAIL_LOG에 남기지 않음
+# optional: 실패해도 FAIL_LOG에 남기지 않음
 fetch_optional() {
   local out="$1"; shift
   fetch_one "$out" "$@" || true
@@ -190,24 +202,28 @@ log "ENTRYJS_REF=$ENTRYJS_REF"
 echo ""
 
 # ───────────── 0) 필수 라이브러리 ─────────────
-run_bg "$LIB/underscore/underscore-min.js" \
-  "https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js"
 
+# ✅ lodash를 "고정 경로"로 저장 (index.html이 이 파일만 봄)
+run_bg "$WWW/lib/lodash.min.js" \
+  "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"
+
+# jQuery
 run_bg "$LIB/jquery/jquery.min.js" \
   "https://cdnjs.cloudflare.com/ajax/libs/jquery/1.9.1/jquery.min.js" \
   "/lib/jquery/jquery.min.js"
 
+# jQuery UI
 run_bg "$LIB/jquery-ui/ui/minified/jquery-ui.min.js" \
   "https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.10.4/jquery-ui.min.js" \
   "/lib/jquery-ui/ui/minified/jquery-ui.min.js"
 
-# ✅ CreateJS는 여기 3개가 "필수": createjs 전역이 생김
+# ✅ CreateJS (필수: createjs 전역)
 mkdir -p "$LIB/EaselJS/lib" "$LIB/PreloadJS/lib" "$LIB/SoundJS/lib"
 run_bg "$LIB/EaselJS/lib/easeljs-0.8.2.min.js"     "https://code.createjs.com/easeljs-0.8.2.min.js"
 run_bg "$LIB/PreloadJS/lib/preloadjs-0.6.2.min.js" "https://code.createjs.com/preloadjs-0.6.2.min.js"
 run_bg "$LIB/SoundJS/lib/soundjs-0.6.2.min.js"     "https://code.createjs.com/soundjs-0.6.2.min.js"
 
-# ❗ flashaudioplugin은 optional (없어도 됨)
+# flashaudioplugin은 optional
 fetch_optional "$LIB/SoundJS/lib/flashaudioplugin-0.6.2.min.js" \
   "https://code.createjs.com/flashaudioplugin-0.6.2.min.js" \
   "https://cdnjs.cloudflare.com/ajax/libs/SoundJS/0.6.2/flashaudioplugin-0.6.2.min.js" &
@@ -221,10 +237,10 @@ run_bg "$JS/ws/python.js" "https://entry-cdn.pstatic.net/js/ws/python.js" "/js/w
 run_bg "$LIB/entryjs/dist/entry.min.js" "/lib/entryjs/dist/entry.min.js" "/lib/entry-js/dist/entry.min.js"
 run_bg "$LIB/entryjs/dist/entry.css"    "/lib/entryjs/dist/entry.css"    "/lib/entry-js/dist/entry.css"
 
-run_bg "$LIB/entryjs/extern/lang/ko.js"        "/lib/entryjs/extern/lang/ko.js"        "/lib/entry-js/extern/lang/ko.js"
-run_bg "$LIB/entryjs/extern/util/static.js"    "/lib/entryjs/extern/util/static.js"    "/lib/entry-js/extern/util/static.js"
-run_bg "$LIB/entryjs/extern/util/handle.js"    "/lib/entryjs/extern/util/handle.js"    "/lib/entry-js/extern/util/handle.js"
-run_bg "$LIB/entryjs/extern/util/bignumber.min.js" "/lib/entryjs/extern/util/bignumber.min.js" "/lib/entry-js/extern/util/bignumber.min.js"
+run_bg "$LIB/entryjs/extern/lang/ko.js"             "/lib/entryjs/extern/lang/ko.js"             "/lib/entry-js/extern/lang/ko.js"
+run_bg "$LIB/entryjs/extern/util/static.js"         "/lib/entryjs/extern/util/static.js"         "/lib/entry-js/extern/util/static.js"
+run_bg "$LIB/entryjs/extern/util/handle.js"         "/lib/entryjs/extern/util/handle.js"         "/lib/entry-js/extern/util/handle.js"
+run_bg "$LIB/entryjs/extern/util/bignumber.min.js"  "/lib/entryjs/extern/util/bignumber.min.js"  "/lib/entry-js/extern/util/bignumber.min.js"
 
 # Tool/Paint
 run_bg "$LIB/entry-tool/dist/entry-tool.js"  "/lib/entry-tool/dist/entry-tool.js"
