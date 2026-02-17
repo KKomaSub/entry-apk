@@ -1,340 +1,198 @@
 #!/usr/bin/env bash
-# Entry Offline assets vendoring script (robust)
-# - Parallel downloads
-# - Never hard-fail on missing files (prints BIG warnings)
-# - Ensures images/media for Entry/Tool/Paint via NPM fallback extract
-# - Scans CSS url(...) for missing relative assets and fetches them
-set -u
+set -Eeuo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WWW="$ROOT/www"
-LIB="$WWW/lib"
-JS="$WWW/js"
-
-mkdir -p "$WWW" "$LIB" "$JS"
-
 MAX_JOBS="${MAX_JOBS:-6}"
-FAIL_LOG="$WWW/.fetch_failed.txt"
-: > "$FAIL_LOG"
 
-# ─────────────────────────────────────────────────────────────
-# Logging helpers
-# ─────────────────────────────────────────────────────────────
-big() {
-  echo ""
+log() { echo "[$(date +'%H:%M:%S')] $*"; }
+bigerr() {
+  echo
   echo "████████████████████████████████████████████████████████████"
-  echo "🚨🚨🚨 $1"
+  echo "🚨🚨🚨 $*"
   echo "████████████████████████████████████████████████████████████"
-  echo ""
+  echo
 }
-log() { echo "[$(date +%H:%M:%S)] $*"; }
+mkdirp() { mkdir -p "$1"; }
 
-# ─────────────────────────────────────────────────────────────
-# Download helpers
-# ─────────────────────────────────────────────────────────────
+# 병렬 제한
+throttle() {
+  while [ "$(jobs -pr | wc -l | tr -d ' ')" -ge "$MAX_JOBS" ]; do
+    wait -n || true
+  done
+}
+
 curl_get() {
-  local url="$1"
-  local out="$2"
-  mkdir -p "$(dirname "$out")"
-  curl -L --compressed --retry 3 --retry-delay 1 --fail -o "$out" "$url"
+  local url="$1" out="$2"
+  mkdirp "$(dirname "$out")"
+  # -f: 404면 실패코드, 우리는 실패를 캐치해서 "계속" 진행
+  if curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 10 --max-time 120 "$url" -o "$out"; then
+    log "OK   -> $out"
+    return 0
+  else
+    return 1
+  fi
 }
 
-fetch_one() {
+# 여러 후보 URL 중 하나라도 성공하면 OK
+get_any() {
   local out="$1"; shift
-  mkdir -p "$(dirname "$out")"
-
-  local url
+  local ok=1
   for url in "$@"; do
     log "GET  $url"
-    if curl_get "$url" "$out" >/dev/null 2>&1; then
-      log "OK   -> $out"
-      return 0
-    fi
-    log "MISS $url"
+    if curl_get "$url" "$out"; then ok=0; break; fi
+    bigerr "MISS $url"
   done
-
-  echo "$out" >> "$FAIL_LOG"
-  big "FAIL all candidates -> $out"
-  echo "Tried:"
-  for url in "$@"; do echo " - $url"; done
-  echo ""
-  return 0
-}
-
-fetch_optional() {
-  local out="$1"; shift
-  fetch_one "$out" "$@" || true
-  if [ -f "$FAIL_LOG" ]; then
-    grep -vxF "$out" "$FAIL_LOG" > "$FAIL_LOG.tmp" 2>/dev/null || true
-    mv -f "$FAIL_LOG.tmp" "$FAIL_LOG" 2>/dev/null || true
+  if [ "$ok" -ne 0 ]; then
+    bigerr "FAIL all candidates -> $out"
+    echo "Tried:"
+    for url in "$@"; do echo " - $url"; done
+    return 1
   fi
   return 0
 }
 
-run_bg() {
-  fetch_one "$@" &
-  while true; do
-    local n
-    n="$(jobs -rp | wc -l | tr -d ' ')"
-    [ "$n" -lt "$MAX_JOBS" ] && break
-    sleep 0.1
-  done
-}
-
-wait_all() {
-  while true; do
-    local pids
-    pids="$(jobs -pr)"
-    [ -z "$pids" ] && break
-    wait $pids 2>/dev/null || true
-    sleep 0.05
-  done
-}
-
-# ─────────────────────────────────────────────────────────────
-# NPM fallback extract helpers
-# ─────────────────────────────────────────────────────────────
-npm_extract_to() {
-  local pkg="$1"
-  local outDir="$2"
-  mkdir -p "$outDir"
-  log "NPM EXTRACT: $pkg -> $outDir"
-
+# npm pack extract helper
+npm_extract() {
+  local pkg="$1" outdir="$2"
+  mkdirp "$outdir"
+  ( cd "$outdir" && npm pack "$pkg" >/dev/null 2>&1 ) || return 1
   local tgz
-  tgz="$(npm pack "$pkg" 2>/dev/null | tail -n 1)" || true
-  if [ -z "${tgz:-}" ] || [ ! -f "$tgz" ]; then
-    big "npm pack failed: $pkg"
-    return 0
-  fi
-
-  rm -rf "$outDir/.tmp_pkg" >/dev/null 2>&1 || true
-  mkdir -p "$outDir/.tmp_pkg"
-  tar -xzf "$tgz" -C "$outDir/.tmp_pkg" >/dev/null 2>&1 || true
-  rm -f "$tgz" >/dev/null 2>&1 || true
-
-  if [ -d "$outDir/.tmp_pkg/package" ]; then
-    cp -R "$outDir/.tmp_pkg/package/"* "$outDir/" 2>/dev/null || true
-  fi
-  rm -rf "$outDir/.tmp_pkg" >/dev/null 2>&1 || true
+  tgz="$(ls -1t "$outdir"/*.tgz 2>/dev/null | head -n1 || true)"
+  [ -n "$tgz" ] || return 1
+  tar -xzf "$tgz" -C "$outdir"
+  rm -f "$tgz"
   return 0
 }
 
 copy_if_exists() {
-  local src="$1"
-  local dst="$2"
+  local src="$1" dst="$2"
   if [ -e "$src" ]; then
-    mkdir -p "$(dirname "$dst")"
-    rm -rf "$dst" >/dev/null 2>&1 || true
-    cp -R "$src" "$dst" 2>/dev/null || true
+    mkdirp "$(dirname "$dst")"
+    rm -rf "$dst"
+    cp -R "$src" "$dst"
     log "COPY OK: $src -> $dst"
+    return 0
   fi
+  return 1
 }
 
-# ─────────────────────────────────────────────────────────────
-# CSS url(...) scan & download missing relative assets
-# ─────────────────────────────────────────────────────────────
-extract_css_urls() {
-  local css="$1"
-  sed -nE 's/.*url\(([^)]+)\).*/\1/p' "$css" 2>/dev/null \
-    | sed -E 's/^["'\'']|["'\'']$//g' \
-    | grep -vE '^(data:|https?:|//)' \
-    | sed -E 's/#.*$//g' \
-    | sed -E 's/\?.*$//g' \
-    | awk 'NF' \
-    | sort -u
-}
-
-normpath_py() {
-  python3 - <<'PY' 2>/dev/null || true
-import os,sys
-p=sys.stdin.read().strip()
-print(os.path.normpath(p))
-PY
-}
-
-download_relative_to_css() {
-  local css="$1"
-  local baseDir
-  baseDir="$(cd "$(dirname "$css")" && pwd)"
-
-  while read -r rel; do
-    [ -z "$rel" ] && continue
-    local target="$baseDir/$rel"
-    [ -f "$target" ] && continue
-
-    local webPath="${target#$WWW/}"
-    webPath="$(printf "%s" "$webPath" | normpath_py)"
-    [ -z "${webPath:-}" ] && continue
-
-    run_bg "$target" \
-      "https://playentry.org/$webPath" \
-      "https://entry-cdn.pstatic.net/$webPath"
-  done < <(extract_css_urls "$css")
-}
-
-# ─────────────────────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────────────────────
 log "=== Fetch Entry assets (offline vendoring) ==="
 log "ROOT=$ROOT"
 log "WWW =$WWW"
 log "MAX_JOBS=$MAX_JOBS"
-echo ""
 
-# (A) Core JS libraries
-mkdir -p "$LIB/underscore" "$LIB/lodash/dist" "$LIB/codemirror" "$LIB/jquery" "$LIB/jquery-ui/ui/minified"
+mkdirp "$WWW/lib"
+mkdirp "$WWW/js/ws"
 
-run_bg "$LIB/underscore/underscore-min.js" \
-  "https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js"
+missing_count=0
 
-run_bg "$LIB/lodash/dist/lodash.min.js" \
-  "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.10/lodash.min.js" \
-  "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"
+# ---------------------------
+# A) CDN/외부 라이브러리
+# ---------------------------
+declare -a TASKS=(
+  # lodash (Entry가 _로 기대)
+  "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.10/lodash.min.js|$WWW/lib/lodash/dist/lodash.min.js"
 
-run_bg "$LIB/codemirror/codemirror.js" \
-  "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"
-run_bg "$LIB/codemirror/codemirror.css" \
-  "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css"
-run_bg "$LIB/codemirror/vim.js" \
-  "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/keymap/vim.min.js"
+  # jQuery/jQuery UI
+  "https://cdnjs.cloudflare.com/ajax/libs/jquery/1.9.1/jquery.min.js|$WWW/lib/jquery/jquery.min.js"
+  "https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.10.4/jquery-ui.min.js|$WWW/lib/jquery-ui/ui/minified/jquery-ui.min.js"
 
-run_bg "$LIB/jquery/jquery.min.js" \
-  "https://cdnjs.cloudflare.com/ajax/libs/jquery/1.9.1/jquery.min.js"
+  # Velocity
+  "https://cdnjs.cloudflare.com/ajax/libs/velocity/1.2.3/velocity.min.js|$WWW/lib/velocity/velocity.min.js"
 
-run_bg "$LIB/jquery-ui/ui/minified/jquery-ui.min.js" \
-  "https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.10.4/jquery-ui.min.js"
+  # CodeMirror (최소 구성)
+  "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css|$WWW/lib/codemirror/codemirror.css"
+  "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js|$WWW/lib/codemirror/codemirror.js"
+  "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/keymap/vim.min.js|$WWW/lib/codemirror/vim.js"
 
-# (B) CreateJS
-mkdir -p "$LIB/PreloadJS/lib" "$LIB/EaselJS/lib" "$LIB/SoundJS/lib"
+  # CreateJS (Entry README 기준 버전)
+  "https://code.createjs.com/preloadjs-0.6.0.min.js|$WWW/lib/PreloadJS/lib/preloadjs-0.6.0.min.js"
+  "https://code.createjs.com/easeljs-0.8.0.min.js|$WWW/lib/EaselJS/lib/easeljs-0.8.0.min.js"
+  "https://code.createjs.com/soundjs-0.6.0.min.js|$WWW/lib/SoundJS/lib/soundjs-0.6.0.min.js"
+)
 
-run_bg "$LIB/PreloadJS/lib/preloadjs-0.6.0.min.js" \
-  "https://code.createjs.com/preloadjs-0.6.0.min.js"
-
-run_bg "$LIB/EaselJS/lib/easeljs-0.8.0.min.js" \
-  "https://code.createjs.com/easeljs-0.8.0.min.js"
-
-run_bg "$LIB/SoundJS/lib/soundjs-0.6.0.min.js" \
-  "https://code.createjs.com/soundjs-0.6.0.min.js"
-
-fetch_optional "$LIB/SoundJS/lib/flashaudioplugin-0.6.0.min.js" \
-  "https://code.createjs.com/flashaudioplugin-0.6.0.min.js" &
-
-# (C) EntryJS / entry-tool / entry-paint
-mkdir -p "$LIB/entryjs/dist" "$LIB/entryjs/extern/lang" "$LIB/entryjs/extern/util"
-mkdir -p "$LIB/entry-tool/dist" "$LIB/entry-paint/dist/static/js"
-
-run_bg "$LIB/entryjs/dist/entry.min.js" \
-  "https://playentry.org/lib/entry-js/dist/entry.min.js" \
-  "https://playentry.org/lib/entryjs/dist/entry.min.js"
-
-run_bg "$LIB/entryjs/dist/entry.css" \
-  "https://playentry.org/lib/entry-js/dist/entry.css" \
-  "https://playentry.org/lib/entryjs/dist/entry.css"
-
-run_bg "$LIB/entryjs/extern/lang/ko.js" \
-  "https://playentry.org/lib/entry-js/extern/lang/ko.js" \
-  "https://playentry.org/lib/entryjs/extern/lang/ko.js"
-
-run_bg "$LIB/entryjs/extern/util/static.js" \
-  "https://playentry.org/lib/entry-js/extern/util/static.js" \
-  "https://playentry.org/lib/entryjs/extern/util/static.js"
-
-run_bg "$LIB/entryjs/extern/util/handle.js" \
-  "https://playentry.org/lib/entry-js/extern/util/handle.js" \
-  "https://playentry.org/lib/entryjs/extern/util/handle.js"
-
-run_bg "$LIB/entryjs/extern/util/bignumber.min.js" \
-  "https://playentry.org/lib/entry-js/extern/util/bignumber.min.js" \
-  "https://playentry.org/lib/entryjs/extern/util/bignumber.min.js"
-
-run_bg "$LIB/entry-tool/dist/entry-tool.js"  "https://playentry.org/lib/entry-tool/dist/entry-tool.js"
-run_bg "$LIB/entry-tool/dist/entry-tool.css" "https://playentry.org/lib/entry-tool/dist/entry-tool.css"
-run_bg "$LIB/entry-paint/dist/static/js/entry-paint.js" "https://playentry.org/lib/entry-paint/dist/static/js/entry-paint.js"
-
-# ✅ Legacy video module (EntryVideoLegacy) - REQUIRED by your Entry build
-mkdir -p "$LIB/module/legacy-video"
-run_bg "$LIB/module/legacy-video/index.js" \
-  "https://entry-cdn.pstatic.net/module/legacy-video/index.js" \
-  "https://playentry.org/module/legacy-video/index.js"
-
-wait_all
-
-# (D) ws locales optional
-mkdir -p "$JS/ws"
-fetch_optional "$JS/ws/locales.js" \
-  "https://playentry.org/js/ws/locales.js" \
-  "https://entry-cdn.pstatic.net/js/ws/locales.js"
-
-# (E) Ensure images/media exist (NPM fallback)
-big "NPM FALLBACK: extracting packages to ensure images/media exist"
-
-npm_extract_to "@entrylabs/entry"      "$WWW/.npm_entry_pkg"
-npm_extract_to "@entrylabs/entry-tool" "$WWW/.npm_entry_tool_pkg"
-npm_extract_to "@entrylabs/entry-paint" "$WWW/.npm_entry_paint_pkg"
-
-mkdir -p "$LIB/entryjs"
-
-for cand in \
-  "$WWW/.npm_entry_pkg/images" \
-  "$WWW/.npm_entry_pkg/media" \
-  "$WWW/.npm_entry_pkg/static" \
-  "$WWW/.npm_entry_pkg/dist/images" \
-  "$WWW/.npm_entry_pkg/dist/media" \
-  "$WWW/.npm_entry_pkg/dist/static" \
-  "$WWW/.npm_entry_pkg/lib/images" \
-  "$WWW/.npm_entry_pkg/lib/media" \
-  "$WWW/.npm_entry_pkg/lib/static" \
-  "$WWW/.npm_entry_pkg/entryjs/images" \
-  "$WWW/.npm_entry_pkg/entryjs/media" \
-  "$WWW/.npm_entry_pkg/entryjs/static" \
-  "$WWW/.npm_entry_pkg/extern" \
-  "$WWW/.npm_entry_pkg/extern/images" \
-  "$WWW/.npm_entry_pkg/extern/media"
-do
-  if [ -d "$cand" ]; then
-    base="$(basename "$cand")"
-    copy_if_exists "$cand" "$LIB/entryjs/$base"
-  fi
+for item in "${TASKS[@]}"; do
+  throttle
+  (
+    IFS="|" read -r url out <<< "$item"
+    log "GET  $url"
+    if ! curl_get "$url" "$out"; then
+      bigerr "MISSING: $url"
+      missing_count=$((missing_count+1)) || true
+    fi
+  ) &
 done
+wait || true
 
-if [ -d "$WWW/.npm_entry_tool_pkg/dist" ]; then
-  mkdir -p "$LIB/entry-tool"
-  copy_if_exists "$WWW/.npm_entry_tool_pkg/dist" "$LIB/entry-tool/dist"
+# flashaudioplugin은 없어도 되지만, 있으면 받아둠(없어도 계속)
+if ! get_any "$WWW/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js" \
+  "https://code.createjs.com/flashaudioplugin-0.6.0.min.js"; then
+  bigerr "MISS flashaudioplugin(optional) (continue)"
 fi
 
-if [ -d "$WWW/.npm_entry_paint_pkg/dist" ]; then
-  mkdir -p "$LIB/entry-paint"
-  copy_if_exists "$WWW/.npm_entry_paint_pkg/dist" "$LIB/entry-paint/dist"
+# locales.js (playentry에서)
+if ! get_any "$WWW/js/ws/locales.js" "https://playentry.org/js/ws/locales.js"; then
+  bigerr "MISS ws/locales.js (continue)"
 fi
 
-rm -rf "$WWW/.npm_entry_pkg" "$WWW/.npm_entry_tool_pkg" "$WWW/.npm_entry_paint_pkg" >/dev/null 2>&1 || true
+# ---------------------------
+# B) Entry 배포물: @entrylabs/entry에서 dist/extern/images를 “통째로” 복사 (핵심)
+# ---------------------------
+bigerr "NPM EXTRACT: @entrylabs/entry (dist/extern/images)"
+TMP_ENTRY="$WWW/.npm_entry_pkg"
+rm -rf "$TMP_ENTRY"
+if npm_extract "@entrylabs/entry" "$TMP_ENTRY"; then
+  # npm pack은 package/ 아래로 풀림
+  PKGDIR="$TMP_ENTRY/package"
+  # dist/extern/images는 Entry 구동 필수
+  copy_if_exists "$PKGDIR/dist"   "$WWW/lib/entryjs/dist"   || true
+  copy_if_exists "$PKGDIR/extern" "$WWW/lib/entryjs/extern" || true
+  copy_if_exists "$PKGDIR/images" "$WWW/lib/entryjs/images" || true
 
-# (F) CSS url scan
-big "CSS url(...) asset scan (download missing relative files)"
-for css in \
-  "$LIB/entryjs/dist/entry.css" \
-  "$LIB/entry-tool/dist/entry-tool.css" \
-  "$LIB/codemirror/codemirror.css"
-do
-  if [ -f "$css" ]; then
-    download_relative_to_css "$css"
-  fi
-done
-wait_all
-
-# (G) Alias dir entry-js <-> entryjs
-if [ -d "$LIB/entryjs" ] && [ ! -d "$LIB/entry-js" ]; then
-  copy_if_exists "$LIB/entryjs" "$LIB/entry-js"
+  # Entry가 /lib/entry-js 를 참조하는 케이스도 있어서 alias 생성
+  rm -rf "$WWW/lib/entry-js"
+  cp -R "$WWW/lib/entryjs" "$WWW/lib/entry-js"
+  log "ALIAS OK: /lib/entry-js created"
+else
+  bigerr "npm pack failed: @entrylabs/entry (FATAL)"
+  exit 2
 fi
-if [ -d "$LIB/entry-js" ] && [ ! -d "$LIB/entryjs" ]; then
-  copy_if_exists "$LIB/entry-js" "$LIB/entryjs"
-fi
 
-# SUMMARY
-if [ -s "$FAIL_LOG" ]; then
-  COUNT="$(sort -u "$FAIL_LOG" | wc -l | tr -d ' ')"
-  big "FETCH SUMMARY: $COUNT file(s) may be missing (script continued)"
-  sort -u "$FAIL_LOG" | sed 's/^/ - /'
+# ---------------------------
+# C) entry-tool / entry-paint / legacy-video는 playentry/entry-cdn에서
+# ---------------------------
+log "GET  https://playentry.org/lib/entry-tool/dist/entry-tool.js"
+curl_get "https://playentry.org/lib/entry-tool/dist/entry-tool.js"  "$WWW/lib/entry-tool/dist/entry-tool.js" || missing_count=$((missing_count+1)) || true
+log "GET  https://playentry.org/lib/entry-tool/dist/entry-tool.css"
+curl_get "https://playentry.org/lib/entry-tool/dist/entry-tool.css" "$WWW/lib/entry-tool/dist/entry-tool.css" || missing_count=$((missing_count+1)) || true
+
+log "GET  https://playentry.org/lib/entry-paint/dist/static/js/entry-paint.js"
+curl_get "https://playentry.org/lib/entry-paint/dist/static/js/entry-paint.js" "$WWW/lib/entry-paint/dist/static/js/entry-paint.js" || missing_count=$((missing_count+1)) || true
+
+# legacy-video (Entry가 기대하는 전역)
+log "GET  https://entry-cdn.pstatic.net/module/legacy-video/index.js"
+curl_get "https://entry-cdn.pstatic.net/module/legacy-video/index.js" "$WWW/lib/module/legacy-video/index.js" || missing_count=$((missing_count+1)) || true
+
+# ---------------------------
+# D) EntrySoundEditor 후보 경로로 시도 (없어도 index.html이 스텁으로 버팀)
+#    - “정답 경로”는 Entry 배포/버전에 따라 달라질 수 있어 후보를 넓게 둠
+# ---------------------------
+bigerr "Try fetch EntrySoundEditor candidates (continue on fail)"
+get_any "$WWW/lib/external/sound/sound-editor.js" \
+  "https://playentry.org/external/sound/sound-editor.js" \
+  "https://playentry.org/lib/external/sound/sound-editor.js" \
+  "https://entry-cdn.pstatic.net/external/sound/sound-editor.js" \
+  "https://entry-cdn.pstatic.net/lib/external/sound/sound-editor.js" \
+  "https://playentry.org/sound/sound-editor.js" \
+  "https://entry-cdn.pstatic.net/sound/sound-editor.js" \
+  || bigerr "MISS EntrySoundEditor (stub will be used) (continue)"
+
+# ---------------------------
+# E) 요약 (절대 멈추지 않게, missing 있어도 계속)
+# ---------------------------
+if [ "$missing_count" -gt 0 ]; then
+  bigerr "FETCH SUMMARY: $missing_count file(s) failed (script continued)"
 else
   log "✅ FETCH SUMMARY: all downloads OK"
 fi
