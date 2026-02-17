@@ -1,204 +1,187 @@
 <!doctype html>
 <html lang="ko">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Entry Offline Editor</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Entry Offline Editor</title>
 
-  <style>
-    html,body{margin:0;height:100%;overflow:hidden;background:#111}
-    #entryContainer{width:100%;height:100%;background:#f5f5f5}
-    #boot{
-      position:fixed;inset:0;background:#000;color:#0f0;
-      font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-      padding:12px;white-space:pre-wrap;overflow:auto;z-index:9999
-    }
-    .bad{color:#ff5c5c}
-    .dim{opacity:.85}
-    .ok{color:#66ff66}
-  </style>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#111}
+#entryContainer{width:100%;height:100%;background:#f5f5f5}
+#boot{
+  position:fixed;inset:0;background:#000;color:#0f0;
+  font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  padding:12px;white-space:pre-wrap;overflow:auto;z-index:9999
+}
+.bad{color:#ff5c5c}
+.dim{opacity:.85}
+.ok{color:#66ff66}
+</style>
 
-  <script>
-    function bootLine(t, cls="") {
-      const el = document.getElementById("boot");
-      if (!el) return;
-      const d = document.createElement("div");
-      if (cls) d.className = cls;
-      d.textContent = t;
-      el.appendChild(d);
-      el.scrollTop = el.scrollHeight;
-    }
-    window.onerror = function (m, s, l, c, e) {
-      bootLine("JS ERROR:", "bad");
-      bootLine(String(e && e.stack ? e.stack : m), "bad");
-    };
+<script>
+function bootLine(t, cls=""){
+  const el=document.getElementById("boot");
+  if(!el) return;
+  const d=document.createElement("div");
+  if(cls) d.className=cls;
+  d.textContent=t;
+  el.appendChild(d);
+  el.scrollTop=el.scrollHeight;
+}
+window.onerror=function(m,s,l,c,e){
+  bootLine("JS ERROR:","bad");
+  bootLine(String(e&&e.stack?e.stack:m),"bad");
+};
 
-    async function probeBase(prefix) {
-      // lodash를 기준으로 base가 맞는지 확인
-      const url = prefix + "lib/lodash/dist/lodash.min.js";
-      try {
-        const r = await fetch(url, { method: "GET", cache: "no-store" });
-        return r.ok;
-      } catch (_) {
-        return false;
-      }
-    }
+async function probeBase(prefix){
+  try{
+    const r=await fetch(prefix+"lib/lodash/dist/lodash.min.js",{method:"GET",cache:"no-store"});
+    return r.ok;
+  }catch(_){return false;}
+}
 
-    function loadJS(src) {
-      return new Promise((resolve) => {
-        const s = document.createElement("script");
-        s.src = src;
-        s.onload = () => resolve({ ok: true, src });
-        s.onerror = () => resolve({ ok: false, src });
-        document.head.appendChild(s);
-      });
-    }
+function loadJS(src){
+  return new Promise(resolve=>{
+    const s=document.createElement("script");
+    s.src=src;
+    s.onload=()=>resolve({ok:true,src});
+    s.onerror=()=>resolve({ok:false,src});
+    document.head.appendChild(s);
+  });
+}
 
-    function loadCSS(href) {
-      return new Promise((resolve) => {
-        const l = document.createElement("link");
-        l.rel = "stylesheet";
-        l.href = href;
-        l.onload = () => resolve({ ok: true, href });
-        l.onerror = () => resolve({ ok: false, href });
-        document.head.appendChild(l);
-      });
-    }
+function loadCSS(href){
+  return new Promise(resolve=>{
+    const l=document.createElement("link");
+    l.rel="stylesheet";
+    l.href=href;
+    l.onload=()=>resolve({ok:true,href});
+    l.onerror=()=>resolve({ok:false,href});
+    document.head.appendChild(l);
+  });
+}
 
-    function must(cond, msg){
-      if(!cond) throw new Error(msg);
-      bootLine("OK   " + msg, "ok");
-    }
+function must(cond,msg){
+  if(!cond) throw new Error(msg);
+  bootLine("OK   "+msg,"ok");
+}
 
-    async function boot() {
-      // ✅ 실제로 파일이 존재하는 base를 자동 탐지
-      const candidates = ["./", "/", "/public/", "/www/"];
-      let BASE = "./";
-      for (const c of candidates) {
-        bootLine("PROBE BASE: " + c, "dim");
-        if (await probeBase(c)) { BASE = c; break; }
-      }
-      bootLine("BASE = " + BASE, "ok");
+async function boot(){
 
-      // ✅ CSS 먼저
-      const cssList = [
-        BASE + "lib/entry-tool/dist/entry-tool.css",
-        BASE + "lib/entryjs/dist/entry.css",
-        BASE + "lib/codemirror/codemirror.css",
-        BASE + "overrides.css",
-      ];
-      for (const href of cssList) {
-        const r = await loadCSS(href);
-        bootLine((r.ok ? "OK   CSS  " : "MISS CSS ") + href, r.ok ? "ok" : "bad");
-      }
+  const candidates=["./","/","/public/","/www/"];
+  let BASE="./";
+  for(const c of candidates){
+    bootLine("PROBE BASE: "+c,"dim");
+    if(await probeBase(c)){BASE=c;break;}
+  }
+  bootLine("BASE = "+BASE,"ok");
 
-      // ✅ (optional) locales
-      {
-        const src = BASE + "js/ws/locales.js";
-        const r = await loadJS(src);
-        bootLine((r.ok ? "OK   JS   " : "MISS(opt) ") + src, r.ok ? "ok" : "dim");
-      }
+  /* ================= CSS ================= */
 
-      // ✅ 핵심 라이브러리 로드 (순서 중요)
-      const jsList = [
-        BASE + "lib/lodash/dist/lodash.min.js",
-        BASE + "lib/jquery/jquery.min.js",
-        BASE + "lib/jquery-ui/ui/minified/jquery-ui.min.js",
+  const cssList=[
+    BASE+"lib/entry-tool/dist/entry-tool.css",
+    BASE+"lib/entryjs/dist/entry.css",
+    BASE+"lib/codemirror/codemirror.css",
+    BASE+"overrides.css"
+  ];
+  for(const href of cssList){
+    const r=await loadCSS(href);
+    bootLine((r.ok?"OK   CSS  ":"MISS CSS ")+href,r.ok?"ok":"bad");
+  }
 
-        BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
-        BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
-        BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
+  /* =============== JS LOAD =============== */
 
-        // flashaudioplugin optional
-        BASE + "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js",
+  const jsList=[
+    BASE+"lib/lodash/dist/lodash.min.js",
+    BASE+"lib/jquery/jquery.min.js",
+    BASE+"lib/jquery-ui/ui/minified/jquery-ui.min.js",
 
-        BASE + "lib/velocity/velocity.min.js",
+    BASE+"lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
+    BASE+"lib/EaselJS/lib/easeljs-0.8.0.min.js",
+    BASE+"lib/SoundJS/lib/soundjs-0.6.0.min.js",
+    BASE+"lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js",
 
-        BASE + "lib/codemirror/codemirror.js",
-        BASE + "lib/codemirror/vim.js",
+    BASE+"lib/velocity/velocity.min.js",
+    BASE+"lib/codemirror/codemirror.js",
+    BASE+"lib/codemirror/vim.js",
 
-        BASE + "lib/entry-tool/dist/entry-tool.js",
+    BASE+"lib/entry-tool/dist/entry-tool.js",
 
-        BASE + "lib/entryjs/extern/lang/ko.js",
-        BASE + "lib/entryjs/extern/util/static.js",
-        BASE + "lib/entryjs/extern/util/handle.js",
-        BASE + "lib/entryjs/extern/util/bignumber.min.js",
-        BASE + "lib/module/legacy-video/index.js",
+    BASE+"lib/entryjs/extern/lang/ko.js",
+    BASE+"lib/entryjs/extern/util/static.js",
+    BASE+"lib/entryjs/extern/util/handle.js",
+    BASE+"lib/entryjs/extern/util/bignumber.min.js",
 
-        BASE + "lib/external/sound/sound-editor.js",
+    BASE+"lib/module/legacy-video/index.js",
+    BASE+"lib/external/sound/sound-editor.js",
 
-        BASE + "lib/entryjs/dist/entry.min.js",
-        BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
-      ];
+    BASE+"lib/entryjs/dist/entry.min.js",
+    BASE+"lib/entry-paint/dist/static/js/entry-paint.js"
+  ];
 
-      for (const src of jsList) {
-        const optional = src.includes("flashaudioplugin") || src.includes("vim.js") || src.includes("locales.js");
-        const r = await loadJS(src);
-        bootLine((r.ok ? "OK   JS   " : (optional ? "MISS(opt) " : "MISS     ")) + src,
-          r.ok ? "ok" : (optional ? "dim" : "bad"));
+  for(const src of jsList){
+    const optional=src.includes("flashaudioplugin")||src.includes("vim.js");
+    const r=await loadJS(src);
 
-        // ✅✅✅ [유일 변경] EntryTool의 registExportFunction이 없을 때만 "노옵"으로 보강
-        // - 목적: TypeError: (0 , r.registExportFunction) is not a function 방지
-        // - 타이밍: entry-tool.js 로드 직후 / entry.min.js 로드 전이어야 함
-        if (r.ok && src.endsWith("lib/entry-tool/dist/entry-tool.js")) {
-          try {
-            if (window.EntryTool && typeof window.EntryTool.registExportFunction !== "function") {
-              window.EntryTool.registExportFunction = function () { /* noop */ };
-              bootLine("PATCH EntryTool.registExportFunction = noop", "ok");
-            }
-          } catch (e) {
-            bootLine("PATCH failed: " + String(e), "bad");
-          }
+    bootLine(
+      (r.ok?"OK   JS   ":(optional?"MISS(opt) ":"MISS     "))+src,
+      r.ok?"ok":(optional?"dim":"bad")
+    );
+
+    /* ======= 🔥 핵심 패치 (유일 수정) ======= */
+
+    if(r.ok && src.endsWith("lib/external/sound/sound-editor.js")){
+      try{
+        if(window.EntrySoundEditor &&
+           typeof window.EntrySoundEditor.registExportFunction!=="function"){
+          window.EntrySoundEditor.registExportFunction=function(){};
+          bootLine("PATCH EntrySoundEditor.registExportFunction = noop","ok");
         }
+      }catch(e){
+        bootLine("PATCH failed: "+String(e),"bad");
       }
-
-      // ✅ 글로벌 체크
-      bootLine("_.memoize = " + (window._ ? typeof _.memoize : "N/A"), window._ ? "ok" : "bad");
-      bootLine("$.fn.jquery = " + (window.$ && $.fn ? $.fn.jquery : "N/A"), (window.$ && $.fn) ? "ok" : "bad");
-      bootLine("createjs = " + (typeof window.createjs), window.createjs ? "ok" : "bad");
-      bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
-      bootLine("EntryTool = " + (typeof window.EntryTool), window.EntryTool ? "ok" : "bad");
-      bootLine("EntryVideoLegacy = " + (typeof window.EntryVideoLegacy), window.EntryVideoLegacy ? "ok" : "bad");
-      bootLine("EntryStatic = " + (typeof window.EntryStatic), window.EntryStatic ? "ok" : "bad");
-      bootLine("EntrySoundEditor.renderSoundEditor = " +
-        (window.EntrySoundEditor ? typeof window.EntrySoundEditor.renderSoundEditor : "N/A"),
-        (window.EntrySoundEditor && typeof window.EntrySoundEditor.renderSoundEditor === "function") ? "ok" : "bad");
-      bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
-        (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
-
-      must(window._, "lodash(_)");
-      must(window.$, "jQuery($)");
-      must(window.createjs, "createjs");
-      must(window.Lang, "Lang");
-      must(window.EntryTool, "EntryTool");
-      must(window.EntryVideoLegacy, "EntryVideoLegacy");
-      must(window.EntryStatic, "EntryStatic");
-      must(window.EntrySoundEditor && typeof window.EntrySoundEditor.renderSoundEditor === "function",
-           "EntrySoundEditor(renderSoundEditor)");
-      must(window.Entry && typeof window.Entry.init === "function", "Entry.init");
-
-      bootLine("Starting Entry.init …", "dim");
-
-      Entry.init(document.getElementById("entryContainer"), {
-        type: "workspace",
-        libDir: BASE + "lib",
-        textCodingEnable: true
-      });
-
-      Entry.loadProject();
-      document.getElementById("boot").remove();
     }
+  }
 
-    document.addEventListener("DOMContentLoaded", () => {
-      boot().catch(e => {
-        bootLine("Boot Error", "bad");
-        bootLine(String(e && e.stack ? e.stack : e), "bad");
-      });
-    });
-  </script>
+  /* ============ GLOBAL CHECK ============ */
+
+  bootLine("Entry.init = "+
+    (window.Entry?typeof window.Entry.init:"N/A"),
+    (window.Entry&&typeof window.Entry.init==="function")?"ok":"bad");
+
+  must(window._,"lodash(_)");
+  must(window.$,"jQuery($)");
+  must(window.createjs,"createjs");
+  must(window.Lang,"Lang");
+  must(window.EntryTool,"EntryTool");
+  must(window.EntryVideoLegacy,"EntryVideoLegacy");
+  must(window.EntryStatic,"EntryStatic");
+  must(window.EntrySoundEditor,"EntrySoundEditor");
+  must(window.Entry && typeof window.Entry.init==="function","Entry.init");
+
+  bootLine("Starting Entry.init …","dim");
+
+  Entry.init(document.getElementById("entryContainer"),{
+    type:"workspace",
+    libDir:BASE+"lib",
+    textCodingEnable:true
+  });
+
+  Entry.loadProject();
+  document.getElementById("boot").remove();
+}
+
+document.addEventListener("DOMContentLoaded",()=>{
+  boot().catch(e=>{
+    bootLine("Boot Error","bad");
+    bootLine(String(e&&e.stack?e.stack:e),"bad");
+  });
+});
+</script>
 </head>
+
 <body>
-  <div id="entryContainer"></div>
-  <div id="boot">Entry Offline Editor\nLoading…</div>
+<div id="entryContainer"></div>
+<div id="boot">Entry Offline Editor\nLoading…</div>
 </body>
 </html>
