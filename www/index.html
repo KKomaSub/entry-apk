@@ -7,7 +7,11 @@
 
   <link rel="stylesheet" href="./lib/entry-tool/dist/entry-tool.css" />
   <link rel="stylesheet" href="./lib/entryjs/dist/entry.css" />
-<link rel="stylesheet" href="./overrides.css" />
+  <!-- CodeMirror (텍스트코딩/Vim) -->
+  <link rel="stylesheet" href="./lib/codemirror/codemirror.css" />
+  <!-- (선택) 화면/이미지/모달 보정 -->
+  <link rel="stylesheet" href="./overrides.css" />
+
   <style>
     html,body{margin:0;height:100%;overflow:hidden;background:#111}
     #entryContainer{width:100%;height:100%;background:#f5f5f5}
@@ -78,6 +82,10 @@
   <!-- ✅ lodash 고정 경로 (fetch에서 www/lib/lodash.min.js로 저장) -->
   <script src="./lib/lodash.min.js"></script>
 
+  <!-- ✅ CodeMirror (Entry보다 먼저!) -->
+  <script src="./lib/codemirror/codemirror.js"></script>
+  <script src="./lib/codemirror/vim.js"></script>
+
   <!-- ✅ jQuery -->
   <script src="./lib/jquery/jquery.min.js"></script>
   <script src="./lib/jquery-ui/ui/minified/jquery-ui.min.js"></script>
@@ -110,6 +118,10 @@
         bootLine("_ (lodash) = " + (typeof window._), window._ ? "ok" : "bad");
         bootLine("_.memoize = " + (window._ ? typeof _.memoize : "N/A"), (window._ && typeof _.memoize==="function") ? "ok" : "bad");
         bootLine("_.chain = " + (window._ ? typeof _.chain : "N/A"), (window._ && typeof _.chain==="function") ? "ok" : "bad");
+
+        bootLine("CodeMirror = " + (typeof window.CodeMirror),
+          (typeof window.CodeMirror === "function" || typeof window.CodeMirror === "object") ? "ok" : "warn");
+
         bootLine("$ (jQuery) = " + (typeof window.$), window.$ ? "ok" : "bad");
         bootLine("createjs = " + (typeof window.createjs), (typeof window.createjs==="object") ? "ok" : "bad");
         bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
@@ -134,7 +146,10 @@
         Entry.init(document.getElementById("entryContainer"), {
           type: "workspace",
           libDir: "./lib",
-          textCodingEnable: true
+
+          // ✅ 안전부팅: CodeMirror가 있어도/없어도, 여기서 true면 Vim 생성하며 CodeMirror 강제 의존
+          // 지금은 부팅 안정이 목표이므로 false 고정.
+          textCodingEnable: false
         });
 
         // ⚠️ 프로젝트 JSON이 있을 때만 호출:
