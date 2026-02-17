@@ -5,11 +5,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Entry Offline Editor</title>
 
-  <link rel="stylesheet" href="/lib/entry-tool/dist/entry-tool.css" />
-  <link rel="stylesheet" href="/lib/entryjs/dist/entry.css" />
-  <link rel="stylesheet" href="/lib/codemirror/codemirror.css" />
-  <link rel="stylesheet" href="/overrides.css" />
-
   <style>
     html,body{margin:0;height:100%;overflow:hidden;background:#111}
     #entryContainer{width:100%;height:100%;background:#f5f5f5}
@@ -33,6 +28,7 @@
       el.appendChild(d);
       el.scrollTop = el.scrollHeight;
     }
+
     window.addEventListener("error", (ev) => {
       bootLine("JS ERROR:", "bad");
       bootLine(String(ev?.error?.stack || ev?.message || ev), "bad");
@@ -41,6 +37,43 @@
       bootLine("PROMISE ERROR:", "bad");
       bootLine(String(ev?.reason?.stack || ev?.reason || ev), "bad");
     });
+
+    // ✅ BASE 자동 감지: "/lib/..."가 404면 "./lib/..."로 자동 전환
+    async function pickBase() {
+      const abs = "/lib/lodash/dist/lodash.min.js";
+      const rel = "./lib/lodash/dist/lodash.min.js";
+      try {
+        const r = await fetch(abs, { method: "GET" });
+        if (r.ok) return { base: "/", ok: abs };
+      } catch {}
+      return { base: "./", ok: rel };
+    }
+
+    function loadCSS(href) {
+      return new Promise((resolve, reject) => {
+        const el = document.createElement("link");
+        el.rel = "stylesheet";
+        el.href = href;
+        el.onload = () => { bootLine("OK   CSS  " + href, "dim"); resolve(); };
+        el.onerror = () => { bootLine("MISS CSS  " + href, "bad"); reject(new Error("CSS load fail: " + href)); };
+        document.head.appendChild(el);
+      });
+    }
+
+    function loadScript(src, optional=false) {
+      return new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = src;
+        s.async = false;
+        s.onload = () => { bootLine("OK   JS   " + src, "dim"); resolve(); };
+        s.onerror = () => {
+          bootLine((optional ? "MISS(opt) " : "MISS      ") + src, optional ? "dim" : "bad");
+          optional ? resolve() : reject(new Error("Script load fail: " + src));
+        };
+        document.head.appendChild(s);
+      });
+    }
+
     function must(name, ok) {
       bootLine((ok ? "OK   " : "MISS ") + name, ok ? "ok" : "bad");
       if (!ok) throw new Error(name + " missing");
@@ -52,115 +85,127 @@
   <div id="entryContainer"></div>
   <div id="boot">Entry Offline Editor\nLoading…</div>
 
-  <script src="/js/ws/locales.js"></script>
-
-  <!-- lodash를 _ 로 고정 -->
-  <script src="/lib/lodash/dist/lodash.min.js"></script>
   <script>
-    if (window._) {
-      if (typeof _.contains !== "function") _.contains = (arr, v) => _.includes(arr, v);
-      if (typeof _.findWhere !== "function") _.findWhere = (arr, attrs) => _.find(arr, attrs);
-    }
-  </script>
+    (async () => {
+      const { base, ok } = await pickBase();
+      bootLine("BASE = " + base + " (probe: " + ok + ")", "ok");
 
-  <!-- jQuery -->
-  <script src="/lib/jquery/jquery.min.js"></script>
-  <script src="/lib/jquery-ui/ui/minified/jquery-ui.min.js"></script>
+      const P = (p) => (base === "/" ? (p.startsWith("/") ? p : "/" + p) : (p.startsWith("./") ? p : "./" + p.replace(/^\//, "")));
 
-  <!-- CreateJS -->
-  <script src="/lib/PreloadJS/lib/preloadjs-0.6.0.min.js"></script>
-  <script src="/lib/EaselJS/lib/easeljs-0.8.0.min.js"></script>
-  <script src="/lib/SoundJS/lib/soundjs-0.6.0.min.js"></script>
+      // ✅ CSS 먼저
+      await loadCSS(P("lib/entry-tool/dist/entry-tool.css")).catch(()=>{});
+      await loadCSS(P("lib/entryjs/dist/entry.css")).catch(()=>{});
+      await loadCSS(P("lib/codemirror/codemirror.css")).catch(()=>{});
+      await loadCSS(P("overrides.css")).catch(()=>{});
 
-  <!-- flashaudioplugin은 없어도 OK (로그만 남김) -->
-  <script>
-    (function(){
-      var s=document.createElement("script");
-      s.src="/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js";
-      s.onload=function(){ bootLine("OK   flashaudioplugin(optional)","dim"); };
-      s.onerror=function(){ bootLine("MISS flashaudioplugin(optional)","dim"); };
-      document.head.appendChild(s);
-    })();
-  </script>
+      // locales optional
+      await loadScript(P("js/ws/locales.js"), true);
 
-  <!-- velocity / codemirror -->
-  <script src="/lib/velocity/velocity.min.js"></script>
-  <script src="/lib/codemirror/codemirror.js"></script>
-  <script src="/lib/codemirror/vim.js"></script>
-
-  <!-- ✅ EntrySoundEditor는 “이전 버전” 넣으면 더 망가짐: 스텁 고정 -->
-  <script>
-    window.EntrySoundEditor = {
-      init: function(){},
-      open: function(){ alert("Sound editor disabled (offline build)"); },
-      close: function(){},
-    };
-    bootLine("EntrySoundEditor = stub (disabled)", "dim");
-  </script>
-
-  <!-- entry-tool 먼저 -->
-  <script src="/lib/entry-tool/dist/entry-tool.js"></script>
-
-  <!-- ✅ Entry extern 먼저: 여기서 EntryStatic이 생겨야 함 -->
-  <script src="/lib/entryjs/extern/lang/ko.js"></script>
-  <script src="/lib/entryjs/extern/util/static.js"></script>
-  <script src="/lib/entryjs/extern/util/handle.js"></script>
-  <script src="/lib/entryjs/extern/util/bignumber.min.js"></script>
-
-  <!-- legacy-video -->
-  <script src="/lib/module/legacy-video/index.js"></script>
-
-  <!-- ✅ entry.min.js가 먼저! -->
-  <script src="/lib/entryjs/dist/entry.min.js"></script>
-
-  <!-- ✅ entry-paint는 Entry/EntryStatic 이후에 로드해야 안전 -->
-  <script src="/lib/entry-paint/dist/static/js/entry-paint.js"></script>
-
-  <script>
-    document.addEventListener("DOMContentLoaded", () => {
-      try {
-        bootLine("_ (lodash) = " + (typeof window._), window._ ? "ok" : "bad");
-        bootLine("$.fn.jquery = " + (window.$?.fn?.jquery || "N/A"), window.$ ? "ok" : "bad");
-        bootLine("createjs = " + (typeof window.createjs), window.createjs ? "ok" : "bad");
-        bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
-        bootLine("EntryTool = " + (typeof window.EntryTool), window.EntryTool ? "ok" : "bad");
-        bootLine("EntryVideoLegacy = " + (typeof window.EntryVideoLegacy), window.EntryVideoLegacy ? "ok" : "bad");
-        bootLine("EntryStatic = " + (typeof window.EntryStatic), window.EntryStatic ? "ok" : "bad");
-        bootLine("EntrySoundEditor = " + (typeof window.EntrySoundEditor), window.EntrySoundEditor ? "ok" : "bad");
-        bootLine("Entry = " + (typeof window.Entry), window.Entry ? "ok" : "bad");
-        bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
-          (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
-
-        must("lodash(_)", !!window._);
-        must("jQuery($)", !!window.$);
-        must("createjs", !!window.createjs);
-        must("Lang", !!window.Lang);
-        must("EntryTool", !!window.EntryTool);
-        must("EntryVideoLegacy", !!window.EntryVideoLegacy);
-        // EntryStatic이 없으면 paint/이미지 경로가 깨질 가능성 큼
-        must("EntryStatic", !!window.EntryStatic);
-        must("EntrySoundEditor(stub)", !!window.EntrySoundEditor);
-        must("Entry.init", window.Entry && typeof window.Entry.init === "function");
-
-        bootLine("Starting Entry.init …", "dim");
-
-        Entry.init(document.getElementById("entryContainer"), {
-          type: "workspace",
-          libDir: "/lib",
-          textCodingEnable: true,
-          hardwareEnable: false,
-          // 사운드에디터 기능은 스텁이라 동작 제한
-          soundeditable: false
-        });
-
-        Entry.loadProject();
-
-        const boot = document.getElementById("boot");
-        if (boot) boot.remove();
-      } catch (e) {
-        bootLine("Boot Error", "bad");
-        bootLine(String(e?.stack || e), "bad");
+      // lodash(_)
+      await loadScript(P("lib/lodash/dist/lodash.min.js"));
+      if (window._) {
+        if (typeof _.contains !== "function") _.contains = (arr, v) => _.includes(arr, v);
+        if (typeof _.findWhere !== "function") _.findWhere = (arr, attrs) => _.find(arr, attrs);
       }
+
+      // jQuery
+      await loadScript(P("lib/jquery/jquery.min.js"));
+      await loadScript(P("lib/jquery-ui/ui/minified/jquery-ui.min.js"));
+
+      // CreateJS
+      await loadScript(P("lib/PreloadJS/lib/preloadjs-0.6.0.min.js"));
+      await loadScript(P("lib/EaselJS/lib/easeljs-0.8.0.min.js"));
+      await loadScript(P("lib/SoundJS/lib/soundjs-0.6.0.min.js"));
+      await loadScript(P("lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js"), true);
+
+      // velocity / codemirror
+      await loadScript(P("lib/velocity/velocity.min.js"));
+      await loadScript(P("lib/codemirror/codemirror.js"));
+      await loadScript(P("lib/codemirror/vim.js"), true);
+
+      // ✅ SoundEditor는 스텁 고정(React 기반 파일 로드 금지)
+      window.EntrySoundEditor = {
+        init(){},
+        open(){ alert("Sound editor disabled (offline build)"); },
+        close(){}
+      };
+      bootLine("EntrySoundEditor = stub (disabled)", "dim");
+
+      // entry-tool
+      await loadScript(P("lib/entry-tool/dist/entry-tool.js"));
+
+      // entry extern (EntryStatic/EaselHandle/BigNumber/Lang)
+      await loadScript(P("lib/entryjs/extern/lang/ko.js"));
+      await loadScript(P("lib/entryjs/extern/util/static.js"));
+      await loadScript(P("lib/entryjs/extern/util/handle.js"));
+      await loadScript(P("lib/entryjs/extern/util/bignumber.min.js"));
+
+      // legacy video
+      await loadScript(P("lib/module/legacy-video/index.js"));
+
+      // Entry core
+      await loadScript(P("lib/entryjs/dist/entry.min.js"));
+
+      // paint after Entry/EntryStatic
+      await loadScript(P("lib/entry-paint/dist/static/js/entry-paint.js"));
+
+      // ✅ 절대경로 강제(이미지/리소스용): base가 "./"라도 실제 요청은 P()로 맞춰짐
+      // EntryStatic 내부 키가 버전마다 달라서 "가급적 안전한 형태"만 보정
+      try {
+        if (window.EntryStatic && typeof window.EntryStatic === "object") {
+          const fix = (v) => {
+            if (typeof v !== "string") return v;
+            // 상대 url(...) 또는 "images/..." 같은 것을 base + lib/entryjs 쪽으로 보정
+            if (v.startsWith("images/")) return P("lib/entryjs/" + v);
+            if (v.startsWith("media/"))  return P("lib/entryjs/" + v);
+            if (v.startsWith("./images/")) return P("lib/entryjs/" + v.replace(/^\.\//,""));
+            if (v.startsWith("./media/"))  return P("lib/entryjs/" + v.replace(/^\.\//,""));
+            return v;
+          };
+          for (const k of Object.keys(window.EntryStatic)) {
+            const vv = window.EntryStatic[k];
+            if (typeof vv === "string") window.EntryStatic[k] = fix(vv);
+          }
+        }
+      } catch {}
+
+      // ---- sanity log ----
+      bootLine("_ (lodash) = " + (typeof window._), window._ ? "ok" : "bad");
+      bootLine("$.fn.jquery = " + (window.$?.fn?.jquery || "N/A"), window.$ ? "ok" : "bad");
+      bootLine("createjs = " + (typeof window.createjs), window.createjs ? "ok" : "bad");
+      bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
+      bootLine("EntryTool = " + (typeof window.EntryTool), window.EntryTool ? "ok" : "bad");
+      bootLine("EntryVideoLegacy = " + (typeof window.EntryVideoLegacy), window.EntryVideoLegacy ? "ok" : "bad");
+      bootLine("EntryStatic = " + (typeof window.EntryStatic), window.EntryStatic ? "ok" : "bad");
+      bootLine("Entry = " + (typeof window.Entry), window.Entry ? "ok" : "bad");
+      bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
+        (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
+
+      must("lodash(_)", !!window._);
+      must("jQuery($)", !!window.$);
+      must("createjs", !!window.createjs);
+      must("Lang", !!window.Lang);
+      must("EntryTool", !!window.EntryTool);
+      must("EntryVideoLegacy", !!window.EntryVideoLegacy);
+      must("EntryStatic", !!window.EntryStatic);
+      must("Entry.init", window.Entry && typeof window.Entry.init === "function");
+
+      bootLine("Starting Entry.init …", "dim");
+
+      Entry.init(document.getElementById("entryContainer"), {
+        type: "workspace",
+        libDir: (base === "/" ? "/lib" : "./lib"),
+        textCodingEnable: true,
+        hardwareEnable: false
+      });
+
+      Entry.loadProject();
+
+      const boot = document.getElementById("boot");
+      if (boot) boot.remove();
+    })().catch((e) => {
+      bootLine("Boot Error", "bad");
+      bootLine(String(e?.stack || e), "bad");
     });
   </script>
 </body>
