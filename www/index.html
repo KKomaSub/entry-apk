@@ -42,71 +42,28 @@
 
   <script src="./js/ws/locales.js"></script>
 
-  <!-- lodash -->
+  <!-- ✅ underscore가 _ 를 담당 (EntryJS가 기대) -->
+  <script src="./lib/underscore/underscore-min.js"></script>
+
+  <!-- lodash는 별도 네임스페이스로 보관 -->
   <script src="./lib/lodash/dist/lodash.min.js"></script>
   <script>
-    // ✅ lodash/underscore 호환 폴리필 (EntryJS가 기대하는 API 맞추기)
-    (function () {
-      if (!window._) return;
-
-      // contains/include/includes 호환
-      if (!_.contains && _.includes) _.contains = _.includes;
-      if (!_.include && _.includes) _.include = _.includes;
-      if (!_.includes && _.contains) _.includes = _.contains;
-
-      // where / findWhere (underscore-style)
-      if (!_.where) {
-        _.where = function (list, props) {
-          if (!list) return [];
-          var out = [];
-          for (var i = 0; i < list.length; i++) {
-            var item = list[i];
-            var ok = true;
-            for (var k in props) {
-              if (props.hasOwnProperty(k) && item[k] !== props[k]) { ok = false; break; }
-            }
-            if (ok) out.push(item);
-          }
-          return out;
-        };
-      }
-
-      if (!_.findWhere) {
-        _.findWhere = function (list, props) {
-          var arr = _.where(list, props);
-          return arr && arr.length ? arr[0] : undefined;
-        };
-      }
-
-      // pluck (underscore-style)
-      if (!_.pluck) {
-        _.pluck = function (list, key) {
-          if (!list) return [];
-          var out = new Array(list.length);
-          for (var i = 0; i < list.length; i++) out[i] = list[i] ? list[i][key] : undefined;
-          return out;
-        };
-      }
-
-      // indexBy (underscore-style)
-      if (!_.indexBy) {
-        _.indexBy = function (list, key) {
-          var out = {};
-          if (!list) return out;
-          for (var i = 0; i < list.length; i++) {
-            var item = list[i];
-            if (!item) continue;
-            out[item[key]] = item;
-          }
-          return out;
-        };
-      }
-    })();
+    // lodash가 전역 _ 를 덮어썼으면, 다시 underscore로 돌리고 lodash는 window.lodash로 보관
+    // (underscore가 먼저 로드되어 있었으니 noConflict()가 정상 동작)
+    if (window._ && typeof window._.noConflict === "function") {
+      window.lodash = window._.noConflict(); // lodash 반환, _는 underscore로 복구
+    }
   </script>
 
   <!-- jQuery -->
   <script src="./lib/jquery/jquery.min.js"></script>
   <script src="./lib/jquery-ui/ui/minified/jquery-ui.min.js"></script>
+
+  <!-- CreateJS는 Entry 전에 (화면/오브젝트 UI 안정) -->
+  <script src="./lib/PreloadJS/lib/preloadjs-0.6.0.min.js"></script>
+  <script src="./lib/EaselJS/lib/easeljs-0.8.0.min.js"></script>
+  <script src="./lib/SoundJS/lib/soundjs-0.6.0.min.js"></script>
+  <script src="./lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js"></script>
 
   <!-- EntryJS prereq -->
   <script src="./lib/entryjs/extern/lang/ko.js"></script>
@@ -117,12 +74,12 @@
   <!-- Entry core -->
   <script src="./lib/entryjs/dist/entry.min.js"></script>
 
-  <!-- other libs -->
-  <script src="./bundle/vendor.bundle.js"></script>
-
   <!-- tool/paint -->
   <script src="./lib/entry-tool/dist/entry-tool.js"></script>
   <script src="./lib/entry-paint/dist/static/js/entry-paint.js"></script>
+
+  <!-- (있으면) 번들 -->
+  <script src="./bundle/vendor.bundle.js"></script>
 
   <script>
     function showErr(title, e) {
@@ -132,8 +89,7 @@
 
     document.addEventListener("DOMContentLoaded", () => {
       try {
-        bootLine("_ (lodash) = " + (typeof window._), window._ ? "ok" : "bad");
-        bootLine("_.contains = " + (window._ ? typeof _.contains : "N/A"), (window._ && typeof _.contains==="function") ? "ok" : "bad");
+        bootLine("_ (underscore) = " + (typeof window._), window._ ? "ok" : "bad");
         bootLine("_.findWhere = " + (window._ ? typeof _.findWhere : "N/A"), (window._ && typeof _.findWhere==="function") ? "ok" : "bad");
         bootLine("$ (jQuery) = " + (typeof window.$), window.$ ? "ok" : "bad");
         bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
@@ -143,8 +99,8 @@
         bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
           (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
 
-        if (!window._) throw new Error("lodash missing");
-        if (typeof _.findWhere !== "function") throw new Error("underscore compatibility missing: _.findWhere");
+        if (!window._) throw new Error("underscore(_) missing");
+        if (typeof _.findWhere !== "function") throw new Error("underscore mismatch: _.findWhere missing");
         if (!window.$) throw new Error("jQuery missing");
         if (!window.Lang) throw new Error("Lang missing");
         if (!window.EaselHandle) throw new Error("EaselHandle missing");
