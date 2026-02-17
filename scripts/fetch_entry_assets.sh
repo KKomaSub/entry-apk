@@ -4,7 +4,7 @@
 # - 404여도 중단 안 함(크게 로그 + 계속)
 # - CreateJS는 code.createjs.com에서 받음 (createjs 전역 안정)
 # - flashaudioplugin은 optional (없어도 정상)
-# - lodash는 고정 경로로 저장: www/lib/lodash.min.js (index.html과 1:1 매칭)
+# - lodash는 고정 경로로 저장: www/lib/lodash.min.js
 # - CodeMirror도 고정 경로로 저장: www/lib/codemirror/*
 # - npm fallback: @entrylabs/entry 통째로 받아서 images/media 등 리소스 보강
 set -u
@@ -50,23 +50,19 @@ fetch_one() {
   add_path_variants() {
     local p="$1"
 
-    # CDN 우선
     add_cand "$P2$p"
     add_cand "$P1$p"
 
-    # /lib/js/... -> /js/...
     if [[ "$p" == /lib/js/* ]]; then
       local p2="${p#/lib}"
       add_cand "$P2$p2"; add_cand "$P1$p2"
     fi
 
-    # /lib/module/... -> /module/...
     if [[ "$p" == /lib/module/* ]]; then
       local p2="${p#/lib}"
       add_cand "$P2$p2"; add_cand "$P1$p2"
     fi
 
-    # /lib/entryjs/... <-> /lib/entry-js/...
     if [[ "$p" == /lib/entryjs/* ]]; then
       local p2="${p/\/lib\/entryjs\//\/lib\/entry-js\/}"
       add_cand "$P2$p2"; add_cand "$P1$p2"
@@ -88,7 +84,6 @@ fetch_one() {
     fi
   done
 
-  # dedupe
   local uniq=()
   local seen=""
   local u
@@ -115,7 +110,6 @@ fetch_one() {
   return 0
 }
 
-# optional: 실패해도 FAIL_LOG에 남기지 않음
 fetch_optional() {
   local out="$1"; shift
   fetch_one "$out" "$@" || true
@@ -197,13 +191,11 @@ log "WWW =$WWW"
 log "MAX_JOBS=$MAX_JOBS"
 echo ""
 
-# ───────────── 0) 필수 라이브러리 ─────────────
-
-# ✅ lodash를 "고정 경로"로 저장 (index.html이 이 파일만 봄)
+# lodash 고정
 run_bg "$WWW/lib/lodash.min.js" \
   "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"
 
-# ✅ CodeMirror(텍스트코딩/Vim) 고정 경로 저장
+# CodeMirror 고정
 mkdir -p "$WWW/lib/codemirror"
 run_bg "$WWW/lib/codemirror/codemirror.js" \
   "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"
@@ -222,13 +214,13 @@ run_bg "$LIB/jquery-ui/ui/minified/jquery-ui.min.js" \
   "https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.10.4/jquery-ui.min.js" \
   "/lib/jquery-ui/ui/minified/jquery-ui.min.js"
 
-# ✅ CreateJS (필수: createjs 전역)
+# CreateJS
 mkdir -p "$LIB/EaselJS/lib" "$LIB/PreloadJS/lib" "$LIB/SoundJS/lib"
 run_bg "$LIB/EaselJS/lib/easeljs-0.8.2.min.js"     "https://code.createjs.com/easeljs-0.8.2.min.js"
 run_bg "$LIB/PreloadJS/lib/preloadjs-0.6.2.min.js" "https://code.createjs.com/preloadjs-0.6.2.min.js"
 run_bg "$LIB/SoundJS/lib/soundjs-0.6.2.min.js"     "https://code.createjs.com/soundjs-0.6.2.min.js"
 
-# flashaudioplugin은 optional (없어도 정상)
+# flashaudioplugin optional
 fetch_optional "$LIB/SoundJS/lib/flashaudioplugin-0.6.2.min.js" \
   "https://code.createjs.com/flashaudioplugin-0.6.2.min.js" \
   "https://cdnjs.cloudflare.com/ajax/libs/SoundJS/0.6.2/flashaudioplugin-0.6.2.min.js" &
@@ -237,35 +229,29 @@ fetch_optional "$LIB/SoundJS/lib/flashaudioplugin-0.6.2.min.js" \
 mkdir -p "$JS/ws" "$JS/module/legacy-video"
 run_bg "$JS/module/legacy-video/index.js" "/module/legacy-video/index.js"
 run_bg "$JS/ws/python.js" "https://entry-cdn.pstatic.net/js/ws/python.js" "/js/ws/python.js" "/lib/js/ws/python.js"
-# locales.js는 서버에서 404일 수 있어 "선택"으로 받지 않음(원하면 아래 주석 해제)
-# fetch_optional "$JS/ws/locales.js" "/js/ws/locales.js" "/lib/js/ws/locales.js" &
 
-# ───────────── 1) EntryJS 본체/외부 ─────────────
+# EntryJS
 run_bg "$LIB/entryjs/dist/entry.min.js" "/lib/entryjs/dist/entry.min.js" "/lib/entry-js/dist/entry.min.js"
 run_bg "$LIB/entryjs/dist/entry.css"    "/lib/entryjs/dist/entry.css"    "/lib/entry-js/dist/entry.css"
-
 run_bg "$LIB/entryjs/extern/lang/ko.js"             "/lib/entryjs/extern/lang/ko.js"             "/lib/entry-js/extern/lang/ko.js"
 run_bg "$LIB/entryjs/extern/util/static.js"         "/lib/entryjs/extern/util/static.js"         "/lib/entry-js/extern/util/static.js"
 run_bg "$LIB/entryjs/extern/util/handle.js"         "/lib/entryjs/extern/util/handle.js"         "/lib/entry-js/extern/util/handle.js"
 run_bg "$LIB/entryjs/extern/util/bignumber.min.js"  "/lib/entryjs/extern/util/bignumber.min.js"  "/lib/entry-js/extern/util/bignumber.min.js"
 
-# Tool/Paint
+# tool/paint
 run_bg "$LIB/entry-tool/dist/entry-tool.js"  "/lib/entry-tool/dist/entry-tool.js"
 run_bg "$LIB/entry-tool/dist/entry-tool.css" "/lib/entry-tool/dist/entry-tool.css"
 run_bg "$LIB/entry-paint/dist/static/js/entry-paint.js" "/lib/entry-paint/dist/static/js/entry-paint.js"
 
 wait_all
 
-# 이미지/아이콘/리소스 보강
 npm_fallback_entry
 
-# alias (entryjs <-> entry-js)
 log "=== Alias copy: /lib/entryjs <-> /lib/entry-js ==="
 mkdir -p "$WWW/lib/entry-js" "$WWW/lib/entryjs"
 cp -R "$WWW/lib/entryjs/"* "$WWW/lib/entry-js/" 2>/dev/null || true
 cp -R "$WWW/lib/entry-js/"* "$WWW/lib/entryjs/" 2>/dev/null || true
 
-# summary
 if [ -s "$FAIL_LOG" ]; then
   COUNT="$(sort -u "$FAIL_LOG" | wc -l | tr -d ' ')"
   big "FETCH SUMMARY: $COUNT file(s) missing (script continues)"
