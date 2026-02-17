@@ -6,6 +6,7 @@
 # - CSS url(...) 의존성 자동 다운로드
 # - HTML src/href/poster + JS 문자열 경로 의존성 자동 다운로드
 # - static.js / entry.min.js 내부 문자열 경로 의존성 자동 다운로드
+# - (핵심) CDN 404/경로변경을 회피하기 위해 @entrylabs/entry NPM 패키지에서 assets를 추출해 채우는 fallback
 # - /lib/entryjs <-> /lib/entry-js 경로 alias 양방향 복사
 #
 # 목표: 404가 나와도 "중단하지 않고", 가능한 후보를 끝까지 시도하고, 실패는 크게 로그만 남기기
@@ -336,7 +337,77 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────
-# 5) 경로 alias 호환 (/lib/entryjs <-> /lib/entry-js)
+# 5) NPM FALLBACK (가장 확실한 방식)
+#  - CDN에서 이미지/아이콘이 404 나면 @entrylabs/entry 패키지에서 꺼내서 채움
+# ─────────────────────────────────────────────────────────────
+npm_fallback_entry() {
+  command -v npm >/dev/null 2>&1 || { big "npm not found -> skip npm fallback"; return 0; }
+  command -v tar >/dev/null 2>&1 || { big "tar not found -> skip npm fallback"; return 0; }
+
+  local NEED=0
+
+  [ -d "$WWW/lib/entry-js/images" ] || NEED=1
+  [ -d "$WWW/lib/entry-js/dist" ]  || NEED=1
+  [ -d "$WWW/lib/entry-js/extern" ]|| NEED=1
+
+  if [ -s "$FAIL_LOG" ] && grep -qE '/images/|/media/|/img/|/icon' "$FAIL_LOG"; then
+    NEED=1
+  fi
+
+  [ "$NEED" -eq 0 ] && { log "NPM fallback not needed"; return 0; }
+
+  big "NPM FALLBACK: extracting @entrylabs/entry into www/lib/entry-js"
+
+  local TMP="$WWW/.tmp_entry_pkg"
+  rm -rf "$TMP"
+  mkdir -p "$TMP"
+  pushd "$TMP" >/dev/null || return 0
+
+  if ! npm pack @entrylabs/entry >/dev/null 2>&1; then
+    big "npm pack failed (network/auth). skip."
+    popd >/dev/null
+    return 0
+  fi
+
+  local TGZ
+  TGZ="$(ls -1 *.tgz 2>/dev/null | head -n 1)"
+  if [ -z "$TGZ" ]; then
+    big "npm pack produced no tgz. skip."
+    popd >/dev/null
+    return 0
+  fi
+
+  tar -xzf "$TGZ" >/dev/null 2>&1 || true
+
+  if [ ! -d "package" ]; then
+    big "tar extract ok but package/ missing. skip."
+    popd >/dev/null
+    return 0
+  fi
+
+  mkdir -p "$WWW/lib/entry-js"
+
+  for d in dist extern images resources module js; do
+    if [ -d "package/$d" ]; then
+      log "NPM -> copy package/$d"
+      mkdir -p "$WWW/lib/entry-js/$d"
+      cp -R "package/$d/"* "$WWW/lib/entry-js/$d/" 2>/dev/null || true
+    fi
+  done
+
+  mkdir -p "$WWW/lib/entryjs"
+  cp -R "$WWW/lib/entry-js/"* "$WWW/lib/entryjs/" 2>/dev/null || true
+
+  popd >/dev/null
+  rm -rf "$TMP"
+
+  big "NPM FALLBACK DONE: www/lib/entry-js filled from @entrylabs/entry"
+  return 0
+}
+npm_fallback_entry
+
+# ─────────────────────────────────────────────────────────────
+# 6) 경로 alias 호환 (/lib/entryjs <-> /lib/entry-js)
 # ─────────────────────────────────────────────────────────────
 log "=== Alias copy: /lib/entryjs <-> /lib/entry-js ==="
 mkdir -p "$WWW/lib/entry-js" "$WWW/lib/entryjs"
@@ -344,7 +415,7 @@ cp -R "$WWW/lib/entryjs/"* "$WWW/lib/entry-js/" 2>/dev/null || true
 cp -R "$WWW/lib/entry-js/"* "$WWW/lib/entryjs/" 2>/dev/null || true
 
 # ─────────────────────────────────────────────────────────────
-# 6) 요약(실패해도 종료코드는 0)
+# 7) 요약(실패해도 종료코드는 0)
 # ─────────────────────────────────────────────────────────────
 if [ -s "$FAIL_LOG" ]; then
   COUNT="$(sort -u "$FAIL_LOG" | wc -l | tr -d ' ')"
@@ -356,4 +427,3 @@ else
 fi
 
 exit 0
-```0
