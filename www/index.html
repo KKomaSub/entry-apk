@@ -49,7 +49,7 @@
   <div id="popupContainer"></div>
   <div id="boot">Entry Offline Editor\nLoading…</div>
 
-  <!-- locales는 없어도 진행 -->
+  <!-- locales: 없으면 warn만 -->
   <script>
     fetch("./js/ws/locales.js",{cache:"no-store"}).then(r=>{
       bootLine("LOAD ws/locales.js: ./js/ws/locales.js","dim");
@@ -86,11 +86,10 @@
     })();
   </script>
 
-  <!-- ✅ EntryTool을 EntryJS보다 먼저 -->
+  <!-- ✅ EntryTool MUST be before Entry (EntryTool global required) -->
   <script src="./lib/entry-tool/dist/entry-tool.js"></script>
   <script>
-    // ✅ entry-tool이 어떤 전역명을 쓰든 EntryTool로 통일
-    // (EntryJS 번들이 EntryTool 전역을 바로 참조하는 케이스 대응)
+    // normalize EntryTool global name
     if (!window.EntryTool) {
       if (window.entryTool) window.EntryTool = window.entryTool;
       else if (window.Tool) window.EntryTool = window.Tool;
@@ -103,7 +102,17 @@
   <script src="./lib/entryjs/extern/util/handle.js"></script>
   <script src="./lib/entryjs/extern/util/bignumber.min.js"></script>
 
-  <!-- ✅ Entry core -->
+  <!-- ✅ Legacy video MUST be before entry.min.js (fix EntryVideoLegacy not defined) -->
+  <script src="./lib/module/legacy-video/index.js"></script>
+  <script>
+    // normalize global if the module uses other export names
+    if (!window.EntryVideoLegacy) {
+      if (window.EntryVideo) window.EntryVideoLegacy = window.EntryVideo;
+      if (window.LegacyVideo) window.EntryVideoLegacy = window.LegacyVideo;
+    }
+  </script>
+
+  <!-- Entry core -->
   <script src="./lib/entryjs/dist/entry.min.js"></script>
 
   <!-- paint -->
@@ -128,7 +137,9 @@
       bind("openPictureManager", () => popup.show({ type: "picture" }));
       bind("openSoundManager", () => popup.show({ type: "sound" }));
       bind("openPictureImport", () => popup.show({ type: "paint" }));
-      bind("openExpansionBlockManager", () => popup.show({ type: "expansion" }, { data: { data: popup.expansionBlocks || [] } }));
+      bind("openExpansionBlockManager", () =>
+        popup.show({ type: "expansion" }, { data: { data: popup.expansionBlocks || [] } })
+      );
     }
 
     document.addEventListener("DOMContentLoaded", () => {
@@ -138,6 +149,7 @@
         bootLine("createjs = " + (typeof window.createjs), (typeof window.createjs==="object") ? "ok" : "bad");
         bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
         bootLine("EntryTool = " + (typeof window.EntryTool), window.EntryTool ? "ok" : "warn");
+        bootLine("EntryVideoLegacy = " + (typeof window.EntryVideoLegacy), window.EntryVideoLegacy ? "ok" : "warn");
         bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
           (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
 
@@ -145,6 +157,9 @@
         must(window.$, "jQuery missing");
         must(typeof window.createjs === "object", "createjs missing");
         must(window.Lang, "Lang missing");
+        must(window.EntryTool, "EntryTool missing");
+        // Legacy video is required for your current Entry build
+        must(window.EntryVideoLegacy, "EntryVideoLegacy missing");
         must(window.Entry && typeof window.Entry.init === "function", "Entry.init missing (entry.min.js crashed)");
 
         bootLine("Starting Entry.init …", "dim");
