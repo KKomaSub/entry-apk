@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+# scripts/fetch_entry_assets.sh
+# Entry Offline(웹)용 라이브러리/이미지/폰트/리소스를 www/ 아래로 “경로 그대로” 받아오는 스크립트
+# - 병렬 다운로드
+# - CSS url(...) 의존성 자동 다운로드
+# - HTML src/href/poster + JS 문자열 경로 의존성 자동 다운로드
+# - static.js / entry.min.js 내부 문자열 경로 의존성 자동 다운로드
+# - /lib/entryjs <-> /lib/entry-js 경로 alias 양방향 복사
+#
+# 주의: 절대 실패로 멈추지 않게(오류는 크게 로그만 남기고 계속) 설계됨
+
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -8,17 +18,20 @@ JS="$WWW/js"
 
 mkdir -p "$LIB" "$JS"
 
-MAX_JOBS="${MAX_JOBS:-8}"
+# 병렬 개수(기본 6)
+MAX_JOBS="${MAX_JOBS:-6}"
 
+# 원격 후보(둘 다 시도)
 P1="https://playentry.org"
 P2="https://entry-cdn.pstatic.net"
 GH_RAW="https://raw.githubusercontent.com"
 ENTRYJS_REF="${ENTRYJS_REF:-develop}"
 
+# 실패 목록
 FAIL_LOG="$WWW/.fetch_failed.txt"
 : > "$FAIL_LOG"
 
-log_big() {
+big() {
   echo ""
   echo "████████████████████████████████████████████████████████████"
   echo "🚨🚨🚨 $1"
@@ -26,27 +39,39 @@ log_big() {
   echo ""
 }
 
+log() { echo "[$(date +%H:%M:%S)] $*"; }
+
+# curl로 다운로드 (실패하면 non-zero)
+curl_get() {
+  local url="$1"
+  local out="$2"
+  mkdir -p "$(dirname "$out")"
+  curl -L --retry 3 --retry-delay 1 --fail -o "$out" "$url"
+}
+
+# 후보 URL들을 순서대로 시도, 전부 실패해도 스크립트는 계속 진행(0 리턴)
 fetch_one() {
   local out="$1"; shift
   mkdir -p "$(dirname "$out")"
 
   for url in "$@"; do
-    echo "[FETCH] $url"
-    if curl -L --retry 3 --retry-delay 1 --fail -o "$out" "$url"; then
-      echo "[OK]   -> $out"
+    log "GET  $url"
+    if curl_get "$url" "$out" >/dev/null 2>&1; then
+      log "OK   -> $out"
       return 0
     fi
-    echo "[MISS] $url"
+    log "MISS $url"
   done
 
   echo "$out" >> "$FAIL_LOG"
-  log_big "FETCH FAILED: $out"
+  big "FAIL all candidates -> $out"
   echo "Tried:"
   for url in "$@"; do echo " - $url"; done
   echo ""
   return 0
 }
 
+# 병렬 실행 + 동시 작업 제한
 run_bg() {
   fetch_one "$@" &
   while [ "$(jobs -pr | wc -l | tr -d ' ')" -ge "$MAX_JOBS" ]; do
@@ -55,8 +80,8 @@ run_bg() {
 }
 
 wait_all() {
-  local pids
   while true; do
+    local pids
     pids="$(jobs -pr)"
     [ -z "$pids" ] && break
     wait $pids 2>/dev/null || true
@@ -64,68 +89,26 @@ wait_all() {
   done
 }
 
-echo "=== Fetch Entry assets (offline vendoring, parallel) ==="
-echo "ROOT=$ROOT"
-echo "WWW=$WWW"
-echo "MAX_JOBS=$MAX_JOBS"
+log "=== Fetch Entry assets ==="
+log "ROOT=$ROOT"
+log "WWW =$WWW"
+log "MAX_JOBS=$MAX_JOBS"
+log "ENTRYJS_REF=$ENTRYJS_REF"
 echo ""
 
-# ✅ EntryJS (workspace)
-run_bg "$LIB/entryjs/dist/entry.min.js" \
-  "$P1/lib/entryjs/dist/entry.min.js" \
-  "$P2/lib/entryjs/dist/entry.min.js"
+# ─────────────────────────────────────────────────────────────
+# 0) 필수 라이브러리(EntryJS가 기대)
+# ─────────────────────────────────────────────────────────────
 
-run_bg "$LIB/entryjs/dist/entry.css" \
-  "$P1/lib/entryjs/dist/entry.css" \
-  "$P2/lib/entryjs/dist/entry.css"
+# ✅ Underscore: EntryJS가 _ 로 기대하는 쪽(가장 중요)
+run_bg "$LIB/underscore/underscore-min.js" \
+  "https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js"
 
-run_bg "$LIB/entryjs/extern/lang/ko.js" \
-  "$P1/lib/entryjs/extern/lang/ko.js" \
-  "$P2/lib/entryjs/extern/lang/ko.js"
-
-run_bg "$LIB/entryjs/extern/util/static.js" \
-  "$P1/lib/entryjs/extern/util/static.js" \
-  "$P2/lib/entryjs/extern/util/static.js"
-
-run_bg "$LIB/entryjs/extern/util/handle.js" \
-  "$P1/lib/entryjs/extern/util/handle.js" \
-  "$P2/lib/entryjs/extern/util/handle.js"
-
-# (권장) extern util들
-run_bg "$LIB/entryjs/extern/util/filbert.js" \
-  "$P1/lib/entryjs/extern/util/filbert.js" \
-  "$P2/lib/entryjs/extern/util/filbert.js"
-
-run_bg "$LIB/entryjs/extern/util/CanvasInput.js" \
-  "$P1/lib/entryjs/extern/util/CanvasInput.js" \
-  "$P2/lib/entryjs/extern/util/CanvasInput.js"
-
-run_bg "$LIB/entryjs/extern/util/ndgmr.Collision.js" \
-  "$P1/lib/entryjs/extern/util/ndgmr.Collision.js" \
-  "$P2/lib/entryjs/extern/util/ndgmr.Collision.js"
-
-run_bg "$LIB/entryjs/extern/util/bignumber.min.js" \
-  "$P1/lib/entryjs/extern/util/bignumber.min.js" \
-  "$P2/lib/entryjs/extern/util/bignumber.min.js"
-
-# Entry tool/paint
-run_bg "$LIB/entry-tool/dist/entry-tool.js" \
-  "$P1/lib/entry-tool/dist/entry-tool.js" \
-  "$P2/lib/entry-tool/dist/entry-tool.js"
-
-run_bg "$LIB/entry-tool/dist/entry-tool.css" \
-  "$P1/lib/entry-tool/dist/entry-tool.css" \
-  "$P2/lib/entry-tool/dist/entry-tool.css"
-
-run_bg "$LIB/entry-paint/dist/static/js/entry-paint.js" \
-  "$P1/lib/entry-paint/dist/static/js/entry-paint.js" \
-  "$P2/lib/entry-paint/dist/static/js/entry-paint.js"
-
-# ✅ lodash는 EntryJS가 기대하는 v3로 고정 (contains 지원)
+# ✅ Lodash: 필요할 때만 쓰되, index.html에서 noConflict로 window.lodash로 빼서 _를 건드리지 않게 사용
 run_bg "$LIB/lodash/dist/lodash.min.js" \
-  "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/3.10.1/lodash.min.js"
+  "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"
 
-# jQuery
+# jQuery / jQuery UI (EntryJS 일부 UI에서 필요)
 run_bg "$LIB/jquery/jquery.min.js" \
   "$P1/lib/jquery/jquery.min.js" \
   "$P2/lib/jquery/jquery.min.js"
@@ -134,11 +117,7 @@ run_bg "$LIB/jquery-ui/ui/minified/jquery-ui.min.js" \
   "$P1/lib/jquery-ui/ui/minified/jquery-ui.min.js" \
   "$P2/lib/jquery-ui/ui/minified/jquery-ui.min.js"
 
-run_bg "$LIB/velocity/velocity.min.js" \
-  "$P1/lib/velocity/velocity.min.js" \
-  "$P2/lib/velocity/velocity.min.js"
-
-# CreateJS
+# CreateJS(스테이지/사운드 등)
 run_bg "$LIB/PreloadJS/lib/preloadjs-0.6.0.min.js" \
   "$P1/lib/PreloadJS/lib/preloadjs-0.6.0.min.js" \
   "$P2/lib/PreloadJS/lib/preloadjs-0.6.0.min.js"
@@ -155,22 +134,86 @@ run_bg "$LIB/SoundJS/lib/flashaudioplugin-0.6.0.min.js" \
   "$P1/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js" \
   "$P2/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js"
 
-# CodeMirror / fuzzy
-run_bg "$LIB/codemirror/lib/codemirror.js" \
-  "$P1/lib/codemirror/lib/codemirror.js" \
-  "$P2/lib/codemirror/lib/codemirror.js"
+# ─────────────────────────────────────────────────────────────
+# 1) EntryJS / Tool / Paint 본체
+# ─────────────────────────────────────────────────────────────
 
-run_bg "$LIB/fuzzy/lib/fuzzy.js" \
-  "$P1/lib/fuzzy/lib/fuzzy.js" \
-  "$P2/lib/fuzzy/lib/fuzzy.js"
+# EntryJS
+run_bg "$LIB/entryjs/dist/entry.min.js" \
+  "$P1/lib/entryjs/dist/entry.min.js" \
+  "$P2/lib/entryjs/dist/entry.min.js" \
+  "$P1/lib/entry-js/dist/entry.min.js" \
+  "$P2/lib/entry-js/dist/entry.min.js"
 
-# socket.io-client
-run_bg "$LIB/socket.io-client/socket.io.js" \
-  "$P1/lib/socket.io-client/socket.io.js" \
-  "$P2/lib/socket.io-client/socket.io.js"
+run_bg "$LIB/entryjs/dist/entry.css" \
+  "$P1/lib/entryjs/dist/entry.css" \
+  "$P2/lib/entryjs/dist/entry.css" \
+  "$P1/lib/entry-js/dist/entry.css" \
+  "$P2/lib/entry-js/dist/entry.css"
 
-# ws files
+# extern
+run_bg "$LIB/entryjs/extern/lang/ko.js" \
+  "$P1/lib/entryjs/extern/lang/ko.js" \
+  "$P2/lib/entryjs/extern/lang/ko.js" \
+  "$P1/lib/entry-js/extern/lang/ko.js" \
+  "$P2/lib/entry-js/extern/lang/ko.js"
+
+run_bg "$LIB/entryjs/extern/util/static.js" \
+  "$P1/lib/entryjs/extern/util/static.js" \
+  "$P2/lib/entryjs/extern/util/static.js" \
+  "$P1/lib/entry-js/extern/util/static.js" \
+  "$P2/lib/entry-js/extern/util/static.js"
+
+run_bg "$LIB/entryjs/extern/util/handle.js" \
+  "$P1/lib/entryjs/extern/util/handle.js" \
+  "$P2/lib/entryjs/extern/util/handle.js" \
+  "$P1/lib/entry-js/extern/util/handle.js" \
+  "$P2/lib/entry-js/extern/util/handle.js"
+
+run_bg "$LIB/entryjs/extern/util/bignumber.min.js" \
+  "$P1/lib/entryjs/extern/util/bignumber.min.js" \
+  "$P2/lib/entryjs/extern/util/bignumber.min.js" \
+  "$P1/lib/entry-js/extern/util/bignumber.min.js" \
+  "$P2/lib/entry-js/extern/util/bignumber.min.js"
+
+# (있으면 도움되는 util들)
+run_bg "$LIB/entryjs/extern/util/CanvasInput.js" \
+  "$P1/lib/entryjs/extern/util/CanvasInput.js" \
+  "$P2/lib/entryjs/extern/util/CanvasInput.js" \
+  "$P1/lib/entry-js/extern/util/CanvasInput.js" \
+  "$P2/lib/entry-js/extern/util/CanvasInput.js"
+
+run_bg "$LIB/entryjs/extern/util/ndgmr.Collision.js" \
+  "$P1/lib/entryjs/extern/util/ndgmr.Collision.js" \
+  "$P2/lib/entryjs/extern/util/ndgmr.Collision.js" \
+  "$P1/lib/entry-js/extern/util/ndgmr.Collision.js" \
+  "$P2/lib/entry-js/extern/util/ndgmr.Collision.js"
+
+run_bg "$LIB/entryjs/extern/util/filbert.js" \
+  "$P1/lib/entryjs/extern/util/filbert.js" \
+  "$P2/lib/entryjs/extern/util/filbert.js" \
+  "$P1/lib/entry-js/extern/util/filbert.js" \
+  "$P2/lib/entry-js/extern/util/filbert.js"
+
+# Entry Tool
+run_bg "$LIB/entry-tool/dist/entry-tool.js" \
+  "$P1/lib/entry-tool/dist/entry-tool.js" \
+  "$P2/lib/entry-tool/dist/entry-tool.js"
+
+run_bg "$LIB/entry-tool/dist/entry-tool.css" \
+  "$P1/lib/entry-tool/dist/entry-tool.css" \
+  "$P2/lib/entry-tool/dist/entry-tool.css"
+
+# Entry Paint
+run_bg "$LIB/entry-paint/dist/static/js/entry-paint.js" \
+  "$P1/lib/entry-paint/dist/static/js/entry-paint.js" \
+  "$P2/lib/entry-paint/dist/static/js/entry-paint.js"
+
+# ─────────────────────────────────────────────────────────────
+# 2) ws(번역/힌트 등) – playentry CDN에서 404 날 수 있어 raw 후보 포함
+# ─────────────────────────────────────────────────────────────
 mkdir -p "$JS/ws"
+
 run_bg "$JS/ws/locales.js" \
   "$GH_RAW/entrylabs/entryjs/$ENTRYJS_REF/example/js/ws/locales.js" \
   "$GH_RAW/entrylabs/entryjs/master/example/js/ws/locales.js" \
@@ -191,154 +234,74 @@ run_bg "$JS/ws/python.js" \
   "$P1/lib/js/ws/python.js" \
   "$P2/lib/js/ws/python.js"
 
-wait_all
-
-# React 18 (npm)
-echo "=== Vendor React 18 from npm (stable) ==="
-npm install --no-audit --no-fund --silent react@18.2.0 react-dom@18.2.0 || true
-mkdir -p "$JS/react18"
-
-if [ -f "$ROOT/node_modules/react/umd/react.production.min.js" ]; then
-  cp -f "$ROOT/node_modules/react/umd/react.production.min.js" "$JS/react18/react.production.min.js"
-else
-  echo "$JS/react18/react.production.min.js" >> "$FAIL_LOG"
-fi
-
-if [ -f "$ROOT/node_modules/react-dom/umd/react-dom.production.min.js" ]; then
-  cp -f "$ROOT/node_modules/react-dom/umd/react-dom.production.min.js" "$JS/react18/react-dom.production.min.js"
-else
-  echo "$JS/react18/react-dom.production.min.js" >> "$FAIL_LOG"
-fi
-
-if [ -s "$FAIL_LOG" ]; then
-  COUNT="$(sort -u "$FAIL_LOG" | wc -l | tr -d ' ')"
-  log_big "FETCH SUMMARY: $COUNT file(s) missing"
-  sort -u "$FAIL_LOG" | sed 's/^/ - /'
-  echo ""
-else
-  echo "✅ FETCH SUMMARY: all downloads OK"
-fi
-
-exit 0  "$P2/lib/entryjs/extern/util/handle.js"
-
-run_bg "$LIB/entryjs/extern/util/bignumber.min.js" \
-  "$P1/lib/entryjs/extern/util/bignumber.min.js" \
-  "$P2/lib/entryjs/extern/util/bignumber.min.js"
-
-# Entry tool/paint
-run_bg "$LIB/entry-tool/dist/entry-tool.js" \
-  "$P1/lib/entry-tool/dist/entry-tool.js" \
-  "$P2/lib/entry-tool/dist/entry-tool.js"
-
-run_bg "$LIB/entry-tool/dist/entry-tool.css" \
-  "$P1/lib/entry-tool/dist/entry-tool.css" \
-  "$P2/lib/entry-tool/dist/entry-tool.css"
-
-run_bg "$LIB/entry-paint/dist/static/js/entry-paint.js" \
-  "$P1/lib/entry-paint/dist/static/js/entry-paint.js" \
-  "$P2/lib/entry-paint/dist/static/js/entry-paint.js"
-
-# Common libs
-run_bg "$LIB/lodash/dist/lodash.min.js" \
-  "$P1/lib/lodash/dist/lodash.min.js" \
-  "$P2/lib/lodash/dist/lodash.min.js"
-
-run_bg "$LIB/jquery/jquery.min.js" \
-  "$P1/lib/jquery/jquery.min.js" \
-  "$P2/lib/jquery/jquery.min.js"
-
-run_bg "$LIB/jquery-ui/ui/minified/jquery-ui.min.js" \
-  "$P1/lib/jquery-ui/ui/minified/jquery-ui.min.js" \
-  "$P2/lib/jquery-ui/ui/minified/jquery-ui.min.js"
-
+# ─────────────────────────────────────────────────────────────
+# 3) 기타 자주 쓰는 라이브러리(있으면 편함)
+# ─────────────────────────────────────────────────────────────
 run_bg "$LIB/velocity/velocity.min.js" \
   "$P1/lib/velocity/velocity.min.js" \
   "$P2/lib/velocity/velocity.min.js"
 
-# CreateJS
-run_bg "$LIB/PreloadJS/lib/preloadjs-0.6.0.min.js" \
-  "$P1/lib/PreloadJS/lib/preloadjs-0.6.0.min.js" \
-  "$P2/lib/PreloadJS/lib/preloadjs-0.6.0.min.js"
-
-run_bg "$LIB/EaselJS/lib/easeljs-0.8.0.min.js" \
-  "$P1/lib/EaselJS/lib/easeljs-0.8.0.min.js" \
-  "$P2/lib/EaselJS/lib/easeljs-0.8.0.min.js"
-
-run_bg "$LIB/SoundJS/lib/soundjs-0.6.0.min.js" \
-  "$P1/lib/SoundJS/lib/soundjs-0.6.0.min.js" \
-  "$P2/lib/SoundJS/lib/soundjs-0.6.0.min.js"
-
-run_bg "$LIB/SoundJS/lib/flashaudioplugin-0.6.0.min.js" \
-  "$P1/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js" \
-  "$P2/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js"
-
-# CodeMirror minimal
-run_bg "$LIB/codemirror/lib/codemirror.js" \
-  "$P1/lib/codemirror/lib/codemirror.js" \
-  "$P2/lib/codemirror/lib/codemirror.js"
-
-# fuzzy
-run_bg "$LIB/fuzzy/lib/fuzzy.js" \
-  "$P1/lib/fuzzy/lib/fuzzy.js" \
-  "$P2/lib/fuzzy/lib/fuzzy.js"
-
-# socket.io-client (있으면)
 run_bg "$LIB/socket.io-client/socket.io.js" \
   "$P1/lib/socket.io-client/socket.io.js" \
   "$P2/lib/socket.io-client/socket.io.js"
 
-# ws files
-mkdir -p "$JS/ws"
-run_bg "$JS/ws/locales.js" \
-  "$GH_RAW/entrylabs/entryjs/$ENTRYJS_REF/example/js/ws/locales.js" \
-  "$GH_RAW/entrylabs/entryjs/master/example/js/ws/locales.js" \
-  "$P1/js/ws/locales.js" \
-  "$P2/js/ws/locales.js" \
-  "$P1/lib/js/ws/locales.js" \
-  "$P2/lib/js/ws/locales.js"
+run_bg "$LIB/codemirror/lib/codemirror.js" \
+  "$P1/lib/codemirror/lib/codemirror.js" \
+  "$P2/lib/codemirror/lib/codemirror.js"
 
-run_bg "$JS/ws/jshint.js" \
-  "$P1/js/ws/jshint.js" \
-  "$P2/js/ws/jshint.js" \
-  "$P1/lib/js/ws/jshint.js" \
-  "$P2/lib/js/ws/jshint.js"
+run_bg "$LIB/fuzzy/lib/fuzzy.js" \
+  "$P1/lib/fuzzy/lib/fuzzy.js" \
+  "$P2/lib/fuzzy/lib/fuzzy.js"
 
-run_bg "$JS/ws/python.js" \
-  "$P1/js/ws/python.js" \
-  "$P2/js/ws/python.js" \
-  "$P1/lib/js/ws/python.js" \
-  "$P2/lib/js/ws/python.js" \
-  "$P1/js/textmode/python/python.js"
-
-# ✅ 여기까지 병렬 다운로드 대기
+# 다운로드 완료 대기
 wait_all
 
-# React 18는 npm에서 벤더링
-echo "=== Vendor React 18 from npm (stable) ==="
-npm install --no-audit --no-fund --silent react@18.2.0 react-dom@18.2.0 || true
-mkdir -p "$JS/react18"
+# ─────────────────────────────────────────────────────────────
+# 4) 의존성 자동 보강 스크립트 실행(실패해도 계속)
+#    - 이 3개는 "깨지는 이미지/폰트/오브젝트 추가 화면" 해결 핵심
+# ─────────────────────────────────────────────────────────────
+log "=== Post processing: deps fetch ==="
 
-if [ -f "$ROOT/node_modules/react/umd/react.production.min.js" ]; then
-  cp -f "$ROOT/node_modules/react/umd/react.production.min.js" "$JS/react18/react.production.min.js"
+# (1) CSS url(...) 의존성 다운로드 + (http면 mirror로 rewrite)
+if [ -f "$ROOT/scripts/fetch_css_deps.js" ]; then
+  node "$ROOT/scripts/fetch_css_deps.js" || true
 else
-  echo "$JS/react18/react.production.min.js" >> "$FAIL_LOG"
+  big "Missing scripts/fetch_css_deps.js (skip)"
 fi
 
-if [ -f "$ROOT/node_modules/react-dom/umd/react-dom.production.min.js" ]; then
-  cp -f "$ROOT/node_modules/react-dom/umd/react-dom.production.min.js" "$JS/react18/react-dom.production.min.js"
+# (2) HTML src/href/poster + JS 내 문자열 경로 의존성 다운로드
+if [ -f "$ROOT/scripts/fetch_dom_js_deps.js" ]; then
+  node "$ROOT/scripts/fetch_dom_js_deps.js" || true
 else
-  echo "$JS/react18/react-dom.production.min.js" >> "$FAIL_LOG"
+  big "Missing scripts/fetch_dom_js_deps.js (skip)"
 fi
 
-# Summary (항상 성공 종료)
+# (3) static.js / entry.min.js / tool / paint 내부 문자열 경로 의존성 다운로드
+if [ -f "$ROOT/scripts/fetch_static_and_bundle_deps.js" ]; then
+  node "$ROOT/scripts/fetch_static_and_bundle_deps.js" || true
+else
+  big "Missing scripts/fetch_static_and_bundle_deps.js (skip)"
+fi
+
+# ─────────────────────────────────────────────────────────────
+# 5) 경로 alias 호환 (/lib/entryjs <-> /lib/entry-js)
+# ─────────────────────────────────────────────────────────────
+log "=== Alias copy: /lib/entryjs <-> /lib/entry-js ==="
+mkdir -p "$WWW/lib/entry-js" "$WWW/lib/entryjs"
+cp -R "$WWW/lib/entryjs/"* "$WWW/lib/entry-js/" 2>/dev/null || true
+cp -R "$WWW/lib/entry-js/"* "$WWW/lib/entryjs/" 2>/dev/null || true
+
+# ─────────────────────────────────────────────────────────────
+# 6) 요약(실패해도 종료코드는 0)
+# ─────────────────────────────────────────────────────────────
 if [ -s "$FAIL_LOG" ]; then
   COUNT="$(sort -u "$FAIL_LOG" | wc -l | tr -d ' ')"
-  log_big "FETCH SUMMARY: $COUNT file(s) missing"
+  big "FETCH SUMMARY: $COUNT file(s) missing (script continues)"
   sort -u "$FAIL_LOG" | sed 's/^/ - /'
   echo ""
-  echo "⚠ 일부 파일이 빠져도 fetch는 계속됩니다."
 else
-  echo "✅ FETCH SUMMARY: all downloads OK"
+  log "✅ FETCH SUMMARY: all downloads OK"
 fi
 
 exit 0
+```0
