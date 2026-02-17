@@ -1,47 +1,27 @@
 /* www/overrides.css */
-/* 1) 전체 이미지가 컨테이너를 넘어서지 않게 */
-img, svg {
-  max-width: 100% !important;
-  height: auto !important;
+
+/* 전체 폰트/박스 모델 안정화 */
+* { box-sizing: border-box; }
+html, body { -webkit-text-size-adjust: 100%; }
+
+/* Entry 내부 이미지 과대 렌더링 완화 */
+img { max-width: 100%; height: auto; }
+
+/* 일부 WebView에서 캔버스가 흐리거나 잘리는 현상 완화 */
+canvas { image-rendering: auto; }
+
+/* 팝업/매니저가 화면 밖으로 튀는 경우가 있어 최소 제한 */
+#popupContainer {
+  overflow: hidden;
 }
 
-/* 2) Entry UI에서 썸네일/아이콘이 background-image로 들어가는 케이스: contain으로 */
-.entrySpriteImage,
-.entryObjectImage,
-.spriteImage,
-.objectImage,
-.image,
-.thumbnail,
-.thumb,
-.icon,
-.preview,
-[class*="sprite"] [class*="image"],
-[class*="object"] [class*="image"],
-[class*="thumb"],
-[class*="icon"] {
-  background-size: contain !important;
-  background-repeat: no-repeat !important;
-  background-position: center center !important;
+/* entry-tool 팝업이 너무 커져서 화면 잘리는 경우 대비 (class명이 버전에 따라 달라질 수 있어서 느슨하게) */
+[class*="modal"], [class*="popup"], [class*="Popup"] {
+  max-width: 100vw;
+  max-height: 100vh;
 }
 
-/* 3) 잘림 방지: 썸네일 박스들이 overflow:hidden으로 잘라버리는 경우가 많아서 완화 */
-.entrySpriteImage,
-.entryObjectImage,
-.spriteImage,
-.objectImage,
-.thumbnail,
-.thumb,
-.preview {
-  overflow: visible !important;
-}
-
-/* 4) “박스 크기는 유지 + 내부 이미지는 맞춤” (img 태그로 들어가는 썸네일용) */
-.entrySpriteImage img,
-.entryObjectImage img,
-.thumbnail img,
-.thumb img,
-.preview img {
-  width: 100% !important;
-  height: 100% !important;
-  object-fit: contain !important;
+/* “카드형 리스트 이미지가 너무 크게 나오는” 경우 흔한 패턴 */
+[class*="card"] img, [class*="Card"] img {
+  object-fit: contain;
 }
