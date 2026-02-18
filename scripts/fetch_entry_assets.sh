@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WWW="${ROOT}/www"
 MAX_JOBS="${MAX_JOBS:-5}"
 
-# ✅ 레포에서 직접 복사(= npm 404 회피)
+# repos
 ENTRYJS_REPO="${ENTRYJS_REPO:-https://github.com/entrylabs/entryjs.git}"
 ENTRYJS_BRANCH="${ENTRYJS_BRANCH:-master}"
 
@@ -70,7 +70,6 @@ fetch_one(){
   fi
 }
 
-# ---- copy dir recursively (real files) ----
 copy_tree(){
   local src="$1"
   local dst="$2"
@@ -92,13 +91,31 @@ clone_shallow(){
   git clone --depth 1 --branch "$branch" "$repo" "$dst" >/dev/null 2>&1
 }
 
+# ---- build helper (npm) ----
+npm_build_repo(){
+  local repo_dir="$1"
+  local build_cmd="${2:-build}"
+  (
+    cd "$repo_dir"
+    # package-lock 없을 수도 있으니 ci 대신 install
+    npm install --no-audit --no-fund >/dev/null 2>&1 || npm install --no-audit --no-fund
+    # build script가 없으면 실패할 수 있으므로 조건 처리
+    if npm run | grep -qE " ${build_cmd}\b"; then
+      npm run "$build_cmd"
+    else
+      bigwarn "No npm script '${build_cmd}' in $repo_dir (skipping build)"
+      return 2
+    fi
+  )
+}
+
 log "=== Fetch Entry assets (offline vendoring) ==="
 log "ROOT=$ROOT"
 log "WWW =$WWW"
 log "MAX_JOBS=$MAX_JOBS"
 
 # ------------------------------------------------------------
-# 1) CDN/공개 URL로 받을 수 있는 것들(누락 난 것 포함)
+# 1) CDN/공개 URL: 필수 libs
 # ------------------------------------------------------------
 job_spawn fetch_one "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.10/lodash.min.js" "/lib/lodash/dist/lodash.min.js"
 job_spawn fetch_one "https://cdnjs.cloudflare.com/ajax/libs/jquery/1.9.1/jquery.min.js" "/lib/jquery/jquery.min.js"
@@ -109,28 +126,24 @@ job_spawn fetch_one "https://code.createjs.com/easeljs-0.8.0.min.js" "/lib/Easel
 job_spawn fetch_one "https://code.createjs.com/soundjs-0.6.0.min.js" "/lib/SoundJS/lib/soundjs-0.6.0.min.js"
 ( job_spawn fetch_one "https://code.createjs.com/flashaudioplugin-0.6.0.min.js" "/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js" ) || true
 
-# ✅ velocity / codemirror (지금 로그에서 MISS 난 것들)
 job_spawn fetch_one "https://cdnjs.cloudflare.com/ajax/libs/velocity/1.2.3/velocity.min.js" "/lib/velocity/velocity.min.js"
 job_spawn fetch_one "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js" "/lib/codemirror/codemirror.js"
 job_spawn fetch_one "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" "/lib/codemirror/codemirror.css"
 ( job_spawn fetch_one "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/keymap/vim.min.js" "/lib/codemirror/vim.js" ) || true
 
-# locales (optional)
+# locales(opt)
 ( job_spawn fetch_one "https://playentry.org/js/ws/locales.js" "/js/ws/locales.js" ) || true
 
-# legacy video (지금 로그에서 MISS)
+# legacy video (필수)
 job_spawn fetch_one "https://entry-cdn.pstatic.net/module/legacy-video/index.js" "/lib/module/legacy-video/index.js"
 
 job_wait_all || true
 
 # ------------------------------------------------------------
-# 2) entryjs FULL COPY (images 하위폴더까지 포함)
+# 2) entryjs FULL COPY (images 하위 폴더 포함)
 # ------------------------------------------------------------
 log "=== CLONE entryjs (FULL static) ==="
-if ! command -v git >/dev/null 2>&1; then
-  bigwarn "git not found. Cannot clone repos."
-  exit 1
-fi
+command -v git >/dev/null 2>&1 || { bigwarn "git not found"; exit 1; }
 
 TMP_ENTRYJS="${WWW}/.tmp_entryjs_clone"
 if ! clone_shallow "$ENTRYJS_REPO" "$ENTRYJS_BRANCH" "$TMP_ENTRYJS"; then
@@ -142,7 +155,6 @@ DEST_ENTRYJS="${WWW}/lib/entryjs"
 DEST_ENTRYJS_ALIAS="${WWW}/lib/entry-js"
 mkdir -p "$DEST_ENTRYJS" "$DEST_ENTRYJS_ALIAS"
 
-# entryjs repo에서 존재하는 폴더만 전부 복사
 for d in dist images media extern src res resources static public uploads; do
   if [ -d "${TMP_ENTRYJS}/${d}" ]; then
     log "COPY entryjs ${d}/ -> ${DEST_ENTRYJS}/${d}/"
@@ -151,90 +163,114 @@ for d in dist images media extern src res resources static public uploads; do
 done
 
 # dist가 없으면 CDN fallback (최소)
-if [ ! -f "${DEST_ENTRYJS}/dist/entry.min.js" ]; then
-  bigwarn "entryjs dist/entry.min.js missing in repo copy -> CDN fallback"
-  fetch_one "https://playentry.org/lib/entry-js/dist/entry.min.js" "/lib/entryjs/dist/entry.min.js" || true
-fi
-if [ ! -f "${DEST_ENTRYJS}/dist/entry.css" ]; then
-  fetch_one "https://playentry.org/lib/entry-js/dist/entry.css" "/lib/entryjs/dist/entry.css" || true
-fi
-if [ ! -f "${DEST_ENTRYJS}/extern/lang/ko.js" ]; then
-  fetch_one "https://playentry.org/lib/entry-js/extern/lang/ko.js" "/lib/entryjs/extern/lang/ko.js" || true
-fi
-if [ ! -f "${DEST_ENTRYJS}/extern/util/static.js" ]; then
-  fetch_one "https://playentry.org/lib/entry-js/extern/util/static.js" "/lib/entryjs/extern/util/static.js" || true
-fi
-if [ ! -f "${DEST_ENTRYJS}/extern/util/handle.js" ]; then
-  fetch_one "https://playentry.org/lib/entry-js/extern/util/handle.js" "/lib/entryjs/extern/util/handle.js" || true
-fi
-if [ ! -f "${DEST_ENTRYJS}/extern/util/bignumber.min.js" ]; then
-  fetch_one "https://playentry.org/lib/entry-js/extern/util/bignumber.min.js" "/lib/entryjs/extern/util/bignumber.min.js" || true
-fi
+[ -f "${DEST_ENTRYJS}/dist/entry.min.js" ] || fetch_one "https://playentry.org/lib/entry-js/dist/entry.min.js" "/lib/entryjs/dist/entry.min.js" || true
+[ -f "${DEST_ENTRYJS}/dist/entry.css" ]    || fetch_one "https://playentry.org/lib/entry-js/dist/entry.css" "/lib/entryjs/dist/entry.css" || true
+[ -f "${DEST_ENTRYJS}/extern/lang/ko.js" ] || fetch_one "https://playentry.org/lib/entry-js/extern/lang/ko.js" "/lib/entryjs/extern/lang/ko.js" || true
+[ -f "${DEST_ENTRYJS}/extern/util/static.js" ] || fetch_one "https://playentry.org/lib/entry-js/extern/util/static.js" "/lib/entryjs/extern/util/static.js" || true
+[ -f "${DEST_ENTRYJS}/extern/util/handle.js" ] || fetch_one "https://playentry.org/lib/entry-js/extern/util/handle.js" "/lib/entryjs/extern/util/handle.js" || true
+[ -f "${DEST_ENTRYJS}/extern/util/bignumber.min.js" ] || fetch_one "https://playentry.org/lib/entry-js/extern/util/bignumber.min.js" "/lib/entryjs/extern/util/bignumber.min.js" || true
 
-# alias mirror
 log "=== ALIAS copy: lib/entryjs -> lib/entry-js ==="
 copy_tree "$DEST_ENTRYJS" "$DEST_ENTRYJS_ALIAS" || true
 
 # ------------------------------------------------------------
-# 3) entry-tool / entry-paint: npm 404라서 GitHub clone로 “dist만” 복사
-#    (index.html이 ./lib/entry-tool/dist/... , ./lib/entry-paint/dist/... 를 요구)
+# 3) entry-tool: dist가 없으면 "빌드해서 dist 생성" 후 복사
 # ------------------------------------------------------------
-log "=== CLONE entry-tool (dist) ==="
+log "=== RESTORE entry-tool (must provide lib/entry-tool/dist/entry-tool.{js,css}) ==="
 TMP_TOOL="${WWW}/.tmp_entry_tool_clone"
+rm -rf "${WWW}/lib/entry-tool/dist"
+mkdir -p "${WWW}/lib/entry-tool/dist"
+
 if clone_shallow "$ENTRY_TOOL_REPO" "$ENTRY_TOOL_BRANCH" "$TMP_TOOL"; then
-  if [ -d "${TMP_TOOL}/dist" ]; then
+  if [ -d "${TMP_TOOL}/dist" ] && (ls -1 "${TMP_TOOL}/dist" | grep -q "entry-tool"); then
+    log "COPY entry-tool dist/ -> www/lib/entry-tool/dist/"
     copy_tree "${TMP_TOOL}/dist" "${WWW}/lib/entry-tool/dist" || true
+  else
+    bigwarn "entry-tool dist missing in repo -> building..."
+    if npm_build_repo "$TMP_TOOL" "build"; then
+      # 빌드 결과 후보 디렉토리들 중 dist 찾기
+      if [ -d "${TMP_TOOL}/dist" ]; then
+        copy_tree "${TMP_TOOL}/dist" "${WWW}/lib/entry-tool/dist" || true
+      elif [ -d "${TMP_TOOL}/build" ]; then
+        copy_tree "${TMP_TOOL}/build" "${WWW}/lib/entry-tool/dist" || true
+      else
+        bigwarn "entry-tool build done but no dist/build directory found"
+      fi
+    else
+      bigwarn "entry-tool build failed (EntryTool will be missing)"
+    fi
   fi
 else
-  bigwarn "entry-tool clone failed (continuing). You will MISS EntryTool."
+  bigwarn "entry-tool clone failed (EntryTool will be missing)"
 fi
 
-log "=== CLONE entry-paint (dist) ==="
+# ------------------------------------------------------------
+# 4) entry-paint: dist가 없으면 "빌드해서 dist 생성" 후 복사
+# ------------------------------------------------------------
+log "=== RESTORE entry-paint (must provide lib/entry-paint/dist/static/js/entry-paint.js) ==="
 TMP_PAINT="${WWW}/.tmp_entry_paint_clone"
+rm -rf "${WWW}/lib/entry-paint/dist"
+mkdir -p "${WWW}/lib/entry-paint/dist"
+
 if clone_shallow "$ENTRY_PAINT_REPO" "$ENTRY_PAINT_BRANCH" "$TMP_PAINT"; then
   if [ -d "${TMP_PAINT}/dist" ]; then
     copy_tree "${TMP_PAINT}/dist" "${WWW}/lib/entry-paint/dist" || true
+  else
+    bigwarn "entry-paint dist missing in repo -> building..."
+    if npm_build_repo "$TMP_PAINT" "build"; then
+      if [ -d "${TMP_PAINT}/dist" ]; then
+        copy_tree "${TMP_PAINT}/dist" "${WWW}/lib/entry-paint/dist" || true
+      elif [ -d "${TMP_PAINT}/build" ]; then
+        copy_tree "${TMP_PAINT}/build" "${WWW}/lib/entry-paint/dist" || true
+      else
+        bigwarn "entry-paint build done but no dist/build directory found"
+      fi
+    else
+      bigwarn "entry-paint build failed"
+    fi
   fi
 else
-  bigwarn "entry-paint clone failed (continuing)."
+  bigwarn "entry-paint clone failed"
 fi
 
 # ------------------------------------------------------------
-# 4) 절대경로(/images /media /uploads) 미러링: “실제 복사본” 생성
+# 5) 절대경로(/images /media /uploads) 미러링: 실제 파일 복사
 # ------------------------------------------------------------
 log "=== ABSOLUTE PATH mirrors: www/images,www/media,www/uploads ==="
 mkdir -p "$WWW/images" "$WWW/media" "$WWW/uploads"
 
-if [ -d "${DEST_ENTRYJS}/images" ]; then
-  copy_tree "${DEST_ENTRYJS}/images" "$WWW/images" || true
-fi
-if [ -d "${DEST_ENTRYJS}/media" ]; then
-  copy_tree "${DEST_ENTRYJS}/media" "$WWW/media" || true
-fi
-# entryjs repo에 uploads가 있으면 미러
-if [ -d "${TMP_ENTRYJS}/uploads" ]; then
-  copy_tree "${TMP_ENTRYJS}/uploads" "$WWW/uploads" || true
-fi
+[ -d "${DEST_ENTRYJS}/images" ] && copy_tree "${DEST_ENTRYJS}/images" "$WWW/images" || true
+[ -d "${DEST_ENTRYJS}/media" ]  && copy_tree "${DEST_ENTRYJS}/media"  "$WWW/media"  || true
+[ -d "${TMP_ENTRYJS}/uploads" ] && copy_tree "${TMP_ENTRYJS}/uploads" "$WWW/uploads" || true
 
 # ------------------------------------------------------------
-# 5) 빠른 검증 (당신 케이스: images/icon/block_icon.png)
+# 6) Verify: entry-tool/entry-paint 실제로 생겼는지 (지금 문제 핵심)
 # ------------------------------------------------------------
-log "=== VERIFY nested images ==="
-if [ -f "$WWW/images/icon/block_icon.png" ] || [ -f "$WWW/lib/entryjs/images/icon/block_icon.png" ]; then
-  log "OK  nested image exists: images/icon/block_icon.png"
+log "=== VERIFY must-have files ==="
+if [ -f "$WWW/lib/entry-tool/dist/entry-tool.js" ]; then
+  log "OK  entry-tool.js exists"
 else
-  bigwarn "MISSING nested image: images/icon/block_icon.png"
-  log "List $WWW/images/icon:"
-  ls -la "$WWW/images/icon" || true
-  log "List $WWW/lib/entryjs/images/icon:"
-  ls -la "$WWW/lib/entryjs/images/icon" || true
+  bigwarn "MISSING: www/lib/entry-tool/dist/entry-tool.js"
+  ls -la "$WWW/lib/entry-tool/dist" || true
+fi
+if [ -f "$WWW/lib/entry-tool/dist/entry-tool.css" ]; then
+  log "OK  entry-tool.css exists"
+else
+  bigwarn "MISSING: www/lib/entry-tool/dist/entry-tool.css"
+  ls -la "$WWW/lib/entry-tool/dist" || true
+fi
+if [ -f "$WWW/lib/entry-paint/dist/static/js/entry-paint.js" ]; then
+  log "OK  entry-paint.js exists"
+else
+  bigwarn "MISSING: www/lib/entry-paint/dist/static/js/entry-paint.js"
+  find "$WWW/lib/entry-paint/dist" -maxdepth 4 -type f | head -n 50 || true
 fi
 
 log "=== SIZE CHECK ==="
 du -sh "$WWW" || true
 du -sh "$WWW/images" || true
 du -sh "$WWW/lib/entryjs" || true
-du -sh "$WWW/lib/entry-tool/dist" || true
-du -sh "$WWW/lib/entry-paint/dist" || true
+du -sh "$WWW/lib/entry-tool" || true
+du -sh "$WWW/lib/entry-paint" || true
 
 log "✅ FETCH DONE"
