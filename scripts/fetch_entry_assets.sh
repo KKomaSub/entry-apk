@@ -1,41 +1,20 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-############################################
-# Entry Offline vendoring fetcher
-# - robust: never mkdir /lib... due to WWW bug
-# - parallel downloads (MAX_JOBS default 5)
-# - continues on 404; prints BIG warnings
-# - pulls assets referenced by CSS/JS (images/audio/fonts)
-############################################
+# ============================================================
+# Fetch Entry assets (offline vendoring)
+# - Parallel downloads (default 5)
+# - FULL copy of entryjs (dist/extern/images/media) from GitHub zip
+# - NEVER write to absolute filesystem paths like /uploads (fix)
+# ============================================================
 
-# ----------------------------
-# CONFIG (override via env)
-# ----------------------------
-ROOT="${ROOT:-$(pwd)}"
-WWW="${WWW:-$ROOT/www}"
-MAX_JOBS="${MAX_JOBS:-5}"          # 병렬 5개
-CURL_UA="${CURL_UA:-Mozilla/5.0 (X11; Linux x86_64) entry-apk-fetch/1.0}"
-CURL_OPTS=(
-  -L --fail --retry 3 --retry-delay 1 --connect-timeout 10 --max-time 120
-  -H "User-Agent: $CURL_UA"
-)
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WWW="${ROOT}/www"
+MAX_JOBS="${MAX_JOBS:-5}"
 
-# Guard: never write to "/" or empty
-if [[ -z "$WWW" || "$WWW" == "/" ]]; then
-  echo "FATAL: WWW is empty or '/', refusing. (WWW='$WWW')"
-  exit 2
-fi
+mkdir -p "${WWW}"
 
-# Normalize paths
-ROOT="$(cd "$ROOT" && pwd)"
-mkdir -p "$WWW"
-
-# ----------------------------
-# Logging helpers
-# ----------------------------
-ts() { date +"%H:%M:%S"; }
-log() { echo "[$(ts)] $*"; }
+log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
 bigwarn() {
   echo
@@ -45,387 +24,264 @@ bigwarn() {
   echo
 }
 
-# ----------------------------
-# Job queue (parallel downloads)
-# ----------------------------
-_jobs=()
-job_add() { _jobs+=("$*"); }
-
+# --- job pool ------------------------------------------------
+pids=()
+job_spawn() {
+  ("$@") &
+  pids+=("$!")
+  job_throttle
+}
+job_throttle() {
+  while [ "${#pids[@]}" -ge "${MAX_JOBS}" ]; do
+    for i in "${!pids[@]}"; do
+      if ! kill -0 "${pids[$i]}" 2>/dev/null; then
+        wait "${pids[$i]}" || true
+        unset 'pids[i]'
+        pids=("${pids[@]}")
+        break
+      fi
+    done
+    sleep 0.05
+  done
+}
 job_wait_all() {
-  local pids=()
-  local cmd
-  local running=0
-
-  for cmd in "${_jobs[@]}"; do
-    bash -c "$cmd" &
-    pids+=("$!")
-    running=$((running+1))
-
-    if (( running >= MAX_JOBS )); then
-      wait "${pids[0]}" || true
-      pids=("${pids[@]:1}")
-      running=$((running-1))
-    fi
-  done
-
+  local rc=0
   for pid in "${pids[@]}"; do
-    wait "$pid" || true
+    wait "$pid" || rc=1
   done
-
-  _jobs=()
+  pids=()
+  return $rc
 }
 
-# ----------------------------
-# File helpers
-# ----------------------------
-ensure_dir() { mkdir -p "$(dirname "$1")"; }
-
-curl_to_file() {
-  local url="$1"
-  local out="$2"
-  ensure_dir "$out"
-  local tmp="$out.tmp.$$"
-  if curl "${CURL_OPTS[@]}" "$url" -o "$tmp" >/dev/null 2>&1; then
-    mv -f "$tmp" "$out"
-    return 0
-  else
-    rm -f "$tmp" >/dev/null 2>&1 || true
-    return 1
-  fi
-}
-
-fetch_any() {
-  local out="$1"; shift
-  local ok=0
-  local tried=()
-  local url
-  for url in "$@"; do
-    tried+=("$url")
-    if curl_to_file "$url" "$out"; then
-      log "OK   -> $out"
-      ok=1
-      break
-    else
-      log "MISS $url"
-    fi
-  done
-  if [[ "$ok" -eq 0 ]]; then
-    bigwarn "FAIL all candidates -> $out"
-    echo "Tried:"
-    for url in "${tried[@]}"; do echo " - $url"; done
-    echo
-    return 1
-  fi
-  return 0
-}
-
-fetch_optional() {
-  local out="$1"; shift
-  if fetch_any "$out" "$@"; then
-    return 0
-  fi
-  bigwarn "OPTIONAL missing: $(basename "$out") (continuing)"
-  return 0
-}
-
-# ----------------------------
-# URL/path helpers
-# ----------------------------
-norm_rel_path() {
+# --- path normalize ------------------------------------------
+# Convert "/uploads/font/a.woff" -> "uploads/font/a.woff"
+# Convert "lib/entryjs/..." stays as-is
+relpath() {
   local p="$1"
-  p="${p#\"}"; p="${p%\"}"
-  p="${p#\'}"; p="${p%\'}"
   p="${p#./}"
-  p="${p#/}"
-  p="${p%%\?*}"
-  p="${p%%\#*}"
+  p="${p#/}"          # <-- CRITICAL: strip leading slash to avoid /uploads mkdir
   echo "$p"
 }
 
-extract_paths() {
-  local file="$1"
-  [[ ! -f "$file" ]] && return 0
-
-  # CSS url(...)
-  grep -Eo 'url\(([^)]+)\)' "$file" 2>/dev/null \
-    | sed -E 's/^url\((.*)\)$/\1/' \
-    | tr -d '"' | tr -d "'" \
-    | sed -E 's/[?#].*$//' \
-    | grep -vE '^(data:|https?:|//)' \
-    || true
-
-  # JS "/images/..", "/media/..", "/uploads/.." etc
-  grep -Eo '["'\''](/(images|media|extern|module|lib|uploads)/[^"'\'']+)["'\'']' "$file" 2>/dev/null \
-    | sed -E 's/^["'\''](.*)["'\'']$/\1/' \
-    | sed -E 's/[?#].*$//' \
-    || true
-
-  # "./images/.."
-  grep -Eo '["'\''](\.?/(images|media|extern|module|lib|uploads)/[^"'\'']+)["'\'']' "$file" 2>/dev/null \
-    | sed -E 's/^["'\''](.*)["'\'']$/\1/' \
-    | sed -E 's/^\.\///' \
-    | sed -E 's/[?#].*$//' \
-    || true
+ensure_parent() {
+  local dest="$1"
+  mkdir -p "$(dirname "$dest")"
 }
 
-fetch_rel_asset() {
-  local rel="$1"
-  rel="$(norm_rel_path "$rel")"
-
-  [[ -z "$rel" ]] && return 0
-  [[ "$rel" == *".."* ]] && return 0
-
-  local out="$WWW/$rel"
-  if [[ -f "$out" ]]; then return 0; fi
-
-  local bases=(
-    "https://playentry.org/"
-    "https://entry-cdn.pstatic.net/"
-  )
-
-  local urls=()
-  local b
-  for b in "${bases[@]}"; do urls+=("${b}${rel}"); done
-
-  fetch_optional "$out" "${urls[@]}"
-}
-
-fetch_rel_assets_parallel() {
-  local list_file="$1"
-  [[ ! -f "$list_file" ]] && return 0
-
-  local rel
-  while IFS= read -r rel; do
-    rel="$(norm_rel_path "$rel")"
-    [[ -z "$rel" ]] && continue
-
-    # ✅ 핵심 수정:
-    # 병렬 bash -c 서브쉘에서 WWW가 비는 바람에 /uploads 같은 루트 mkdir 시도했던 문제를 방지
-    # -> 커맨드 스니펫 안에서 WWW를 명시적으로 다시 세팅하고 함수 호출
-    local esc_rel esc_www
-    esc_rel="${rel//\"/\\\"}"
-    esc_www="${WWW//\"/\\\"}"
-    job_add "WWW=\"${esc_www}\"; fetch_rel_asset \"${esc_rel}\""
-  done < "$list_file"
-
-  job_wait_all
-}
-
-# export functions used by bash -c
-export -f ts log bigwarn ensure_dir curl_to_file fetch_any fetch_optional norm_rel_path extract_paths fetch_rel_asset
-
-# ----------------------------
-# Main
-# ----------------------------
-log "=== Fetch Entry assets (offline vendoring) ==="
-log "ROOT=$ROOT"
-log "WWW =$WWW"
-log "MAX_JOBS=$MAX_JOBS"
-
-mkdir -p \
-  "$WWW/lib" \
-  "$WWW/js" \
-  "$WWW/bundle" \
-  "$WWW/lib/entryjs" \
-  "$WWW/lib/entry-tool" \
-  "$WWW/lib/entry-paint" \
-  "$WWW/lib/module" \
-  "$WWW/lib/external" \
-  "$WWW/lib/external/sound" \
-  "$WWW/lib/react" \
-  "$WWW/lib/codemirror" \
-  "$WWW/lib/jquery" \
-  "$WWW/lib/jquery-ui/ui/minified" \
-  "$WWW/lib/lodash/dist" \
-  "$WWW/lib/underscore" \
-  "$WWW/lib/velocity" \
-  "$WWW/lib/PreloadJS/lib" \
-  "$WWW/lib/EaselJS/lib" \
-  "$WWW/lib/SoundJS/lib" \
-  "$WWW/uploads/font"
-
-log "Downloading 3rd-party libs…"
-
-job_add "fetch_any \"$WWW/lib/lodash/dist/lodash.min.js\" \
-  \"https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.10/lodash.min.js\" \
-  \"https://cdn.jsdelivr.net/npm/lodash@4.17.10/lodash.min.js\""
-
-job_add "fetch_any \"$WWW/lib/underscore/underscore-min.js\" \
-  \"https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js\" \
-  \"https://cdn.jsdelivr.net/npm/underscore@1.8.3/underscore-min.js\""
-
-job_add "fetch_any \"$WWW/lib/jquery/jquery.min.js\" \
-  \"https://cdnjs.cloudflare.com/ajax/libs/jquery/1.9.1/jquery.min.js\" \
-  \"https://cdn.jsdelivr.net/npm/jquery@1.9.1/dist/jquery.min.js\""
-
-job_add "fetch_any \"$WWW/lib/jquery-ui/ui/minified/jquery-ui.min.js\" \
-  \"https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.10.4/jquery-ui.min.js\" \
-  \"https://cdn.jsdelivr.net/npm/jquery-ui@1.10.4/jquery-ui.min.js\""
-
-job_add "fetch_any \"$WWW/lib/velocity/velocity.min.js\" \
-  \"https://cdnjs.cloudflare.com/ajax/libs/velocity/1.2.3/velocity.min.js\" \
-  \"https://cdn.jsdelivr.net/npm/velocity-animate@1.2.3/velocity.min.js\""
-
-job_add "fetch_any \"$WWW/lib/codemirror/codemirror.js\" \
-  \"https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js\" \
-  \"https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js\""
-
-job_add "fetch_any \"$WWW/lib/codemirror/codemirror.css\" \
-  \"https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css\" \
-  \"https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css\""
-
-job_add "fetch_optional \"$WWW/lib/codemirror/vim.js\" \
-  \"https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/keymap/vim.min.js\" \
-  \"https://cdn.jsdelivr.net/npm/codemirror@5.65.16/keymap/vim.js\""
-
-job_add "fetch_any \"$WWW/lib/react/react.production.min.js\" \
-  \"https://unpkg.com/react@16.14.0/umd/react.production.min.js\" \
-  \"https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js\""
-
-job_add "fetch_any \"$WWW/lib/react/react-dom.production.min.js\" \
-  \"https://unpkg.com/react-dom@16.14.0/umd/react-dom.production.min.js\" \
-  \"https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js\""
-
-job_add "fetch_any \"$WWW/lib/PreloadJS/lib/preloadjs-0.6.0.min.js\" \
-  \"https://code.createjs.com/preloadjs-0.6.0.min.js\" \
-  \"https://cdnjs.cloudflare.com/ajax/libs/PreloadJS/0.6.0/preloadjs-0.6.0.min.js\""
-
-job_add "fetch_any \"$WWW/lib/EaselJS/lib/easeljs-0.8.0.min.js\" \
-  \"https://code.createjs.com/easeljs-0.8.0.min.js\" \
-  \"https://cdnjs.cloudflare.com/ajax/libs/EaselJS/0.8.0/easeljs-0.8.0.min.js\""
-
-job_add "fetch_any \"$WWW/lib/SoundJS/lib/soundjs-0.6.0.min.js\" \
-  \"https://code.createjs.com/soundjs-0.6.0.min.js\" \
-  \"https://cdnjs.cloudflare.com/ajax/libs/SoundJS/0.6.0/soundjs-0.6.0.min.js\""
-
-job_add "fetch_optional \"$WWW/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js\" \
-  \"https://code.createjs.com/flashaudioplugin-0.6.0.min.js\" \
-  \"https://cdnjs.cloudflare.com/ajax/libs/SoundJS/0.6.0/flashaudioplugin-0.6.0.min.js\""
-
-job_wait_all
-
-log "Downloading Entry core libs…"
-
-job_add "fetch_any \"$WWW/lib/entryjs/dist/entry.min.js\" \
-  \"https://playentry.org/lib/entry-js/dist/entry.min.js\" \
-  \"https://entry-cdn.pstatic.net/lib/entry-js/dist/entry.min.js\""
-
-job_add "fetch_any \"$WWW/lib/entryjs/dist/entry.css\" \
-  \"https://playentry.org/lib/entry-js/dist/entry.css\" \
-  \"https://entry-cdn.pstatic.net/lib/entry-js/dist/entry.css\""
-
-job_add "fetch_any \"$WWW/lib/entryjs/extern/lang/ko.js\" \
-  \"https://playentry.org/lib/entry-js/extern/lang/ko.js\" \
-  \"https://entry-cdn.pstatic.net/lib/entry-js/extern/lang/ko.js\""
-
-job_add "fetch_any \"$WWW/lib/entryjs/extern/util/static.js\" \
-  \"https://playentry.org/lib/entry-js/extern/util/static.js\" \
-  \"https://entry-cdn.pstatic.net/lib/entry-js/extern/util/static.js\""
-
-job_add "fetch_any \"$WWW/lib/entryjs/extern/util/handle.js\" \
-  \"https://playentry.org/lib/entry-js/extern/util/handle.js\" \
-  \"https://entry-cdn.pstatic.net/lib/entry-js/extern/util/handle.js\""
-
-job_add "fetch_any \"$WWW/lib/entryjs/extern/util/bignumber.min.js\" \
-  \"https://playentry.org/lib/entry-js/extern/util/bignumber.min.js\" \
-  \"https://entry-cdn.pstatic.net/lib/entry-js/extern/util/bignumber.min.js\""
-
-job_add "fetch_any \"$WWW/lib/entry-tool/dist/entry-tool.js\" \
-  \"https://playentry.org/lib/entry-tool/dist/entry-tool.js\" \
-  \"https://entry-cdn.pstatic.net/lib/entry-tool/dist/entry-tool.js\""
-
-job_add "fetch_any \"$WWW/lib/entry-tool/dist/entry-tool.css\" \
-  \"https://playentry.org/lib/entry-tool/dist/entry-tool.css\" \
-  \"https://entry-cdn.pstatic.net/lib/entry-tool/dist/entry-tool.css\""
-
-job_add "fetch_any \"$WWW/lib/entry-paint/dist/static/js/entry-paint.js\" \
-  \"https://playentry.org/lib/entry-paint/dist/static/js/entry-paint.js\" \
-  \"https://entry-cdn.pstatic.net/lib/entry-paint/dist/static/js/entry-paint.js\""
-
-job_add "fetch_any \"$WWW/js/ws/locales.js\" \
-  \"https://playentry.org/js/ws/locales.js\" \
-  \"https://entry-cdn.pstatic.net/js/ws/locales.js\""
-
-job_add "fetch_any \"$WWW/lib/module/legacy-video/index.js\" \
-  \"https://entry-cdn.pstatic.net/module/legacy-video/index.js\" \
-  \"https://playentry.org/module/legacy-video/index.js\""
-
-job_add "fetch_optional \"$WWW/lib/external/sound/sound-editor.js\" \
-  \"https://playentry.org/lib/external/sound/sound-editor.js\" \
-  \"https://entry-cdn.pstatic.net/lib/external/sound/sound-editor.js\" \
-  \"https://entry-cdn.pstatic.net/external/sound/sound-editor.js\""
-
-job_wait_all
-
-# Alias copy: /lib/entry-js <-> /lib/entryjs
-rm -rf "$WWW/lib/entry-js" >/dev/null 2>&1 || true
-cp -R "$WWW/lib/entryjs" "$WWW/lib/entry-js" >/dev/null 2>&1 || true
-
-# ----------------------------
-# Scan JS/CSS and fetch referenced assets
-# ----------------------------
-log "Scanning JS/CSS for additional assets…"
-
-TMPDIR="$ROOT/.fetch_tmp"
-mkdir -p "$TMPDIR"
-
-assets_list="$TMPDIR/assets.txt"
-: > "$assets_list"
-
-for f in \
-  "$WWW/lib/entryjs/dist/entry.css" \
-  "$WWW/lib/entry-tool/dist/entry-tool.css" \
-  "$WWW/lib/entryjs/dist/entry.min.js" \
-  "$WWW/lib/entry-paint/dist/static/js/entry-paint.js" \
-  "$WWW/lib/entryjs/extern/util/static.js" \
-  "$WWW/lib/external/sound/sound-editor.js"
-do
-  extract_paths "$f" >> "$assets_list" || true
-done
-
-sort -u "$assets_list" | sed '/^\s*$/d' > "$assets_list.uniq"
-mv -f "$assets_list.uniq" "$assets_list"
-
-rel_list="$TMPDIR/rel_assets.txt"
-: > "$rel_list"
-while IFS= read -r p; do
-  p="$(norm_rel_path "$p")"
-  [[ -z "$p" ]] && continue
-  echo "$p" >> "$rel_list"
-done < "$assets_list"
-sort -u "$rel_list" -o "$rel_list"
-
-log "Found $(wc -l < "$rel_list" | tr -d ' ') asset path(s) from static scan."
-
-# ✅ 여기서 /uploads/... 같은 것도 이제 WWW 아래로 정상 저장됨
-fetch_rel_assets_parallel "$rel_list"
-
-# ----------------------------
-# Summary (never hard fail)
-# ----------------------------
-missing=0
-crit_files=(
-  "$WWW/lib/lodash/dist/lodash.min.js"
-  "$WWW/lib/jquery/jquery.min.js"
-  "$WWW/lib/EaselJS/lib/easeljs-0.8.0.min.js"
-  "$WWW/lib/entryjs/dist/entry.min.js"
-  "$WWW/lib/entryjs/dist/entry.css"
-  "$WWW/lib/entry-tool/dist/entry-tool.js"
-  "$WWW/lib/entry-tool/dist/entry-tool.css"
-)
-
-for f in "${crit_files[@]}"; do
-  if [[ ! -s "$f" ]]; then
-    bigwarn "CRITICAL missing: $f"
-    missing=$((missing+1))
+curl_get() {
+  local url="$1" dest="$2"
+  ensure_parent "$dest"
+  # --fail to treat 404 as error; retry a bit
+  if curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 10 "$url" -o "${dest}.tmp"; then
+    mv -f "${dest}.tmp" "$dest"
+    log "OK   -> $dest"
+    return 0
+  else
+    rm -f "${dest}.tmp" || true
+    log "MISS $url"
+    return 1
   fi
-done
+}
 
-if (( missing > 0 )); then
-  bigwarn "FETCH SUMMARY: $missing critical file(s) missing (but script exits 0 to continue workflow)"
-else
-  log "✅ FETCH SUMMARY: critical files OK"
+fetch_with_candidates() {
+  # usage: fetch_with_candidates "dest_rel" "url1" "url2" ...
+  local dest_rel="$1"; shift
+  local dest="${WWW}/$(relpath "$dest_rel")"
+
+  local ok=1
+  for url in "$@"; do
+    log "GET  $url"
+    if curl_get "$url" "$dest"; then ok=0; break; fi
+  done
+
+  if [ $ok -ne 0 ]; then
+    bigwarn "FAIL all candidates -> $dest_rel"
+    echo "Tried:"
+    for url in "$@"; do echo " - $url"; done
+    return 1
+  fi
+  return 0
+}
+
+# optional fetch: never fails pipeline
+fetch_optional() {
+  local dest_rel="$1"; shift
+  if ! fetch_with_candidates "$dest_rel" "$@"; then
+    bigwarn "OPTIONAL missing: $(basename "$dest_rel") (continuing)"
+    return 0
+  fi
+  return 0
+}
+
+# --- extract zip ----------------------------------------------
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || { bigwarn "Missing command: $1"; exit 1; }
+}
+need_cmd curl
+need_cmd unzip
+need_cmd rsync
+
+extract_zip_url() {
+  local url="$1" outdir="$2"
+  rm -rf "$outdir"
+  mkdir -p "$outdir"
+  local zip="${outdir}.zip"
+  log "DOWNLOAD ZIP $url"
+  curl -fsSL --retry 3 --retry-delay 1 "$url" -o "$zip"
+  unzip -q "$zip" -d "$outdir"
+  rm -f "$zip"
+}
+
+# ============================================================
+# 0) Start
+# ============================================================
+log "=== Fetch Entry assets (offline vendoring) ==="
+log "ROOT=${ROOT}"
+log "WWW =${WWW}"
+log "MAX_JOBS=${MAX_JOBS}"
+
+# ============================================================
+# 1) FULL COPY entryjs (dist/extern/images/media) - 그대로 복사
+# ============================================================
+# 최신은 보통 develop에 있고, entry-offline은 master라는 맥락이지만
+# entryjs는 공식 repo 기본 브랜치가 develop임. (필요 시 ENTRYJS_REF로 변경)
+ENTRYJS_REF="${ENTRYJS_REF:-develop}"
+ENTRYJS_ZIP="https://codeload.github.com/entrylabs/entryjs/zip/refs/heads/${ENTRYJS_REF}"
+TMP_ENTRYJS="${WWW}/.tmp_entryjs"
+
+bigwarn "FULL COPY entryjs from GitHub (${ENTRYJS_REF}) -> www/lib/entryjs (dist/extern/images/media)"
+extract_zip_url "$ENTRYJS_ZIP" "$TMP_ENTRYJS"
+
+# zip 최상단 폴더 찾기
+ENTRYJS_ROOT_DIR="$(find "$TMP_ENTRYJS" -maxdepth 1 -type d -name "entryjs-*" | head -n 1)"
+if [ -z "${ENTRYJS_ROOT_DIR}" ] || [ ! -d "${ENTRYJS_ROOT_DIR}" ]; then
+  bigwarn "entryjs zip layout unexpected"
+  exit 1
 fi
 
-log "fetch exit=0"
+mkdir -p "${WWW}/lib/entryjs"
+rsync -a --delete "${ENTRYJS_ROOT_DIR}/dist/"  "${WWW}/lib/entryjs/dist/"  || true
+rsync -a --delete "${ENTRYJS_ROOT_DIR}/extern/" "${WWW}/lib/entryjs/extern/" || true
+rsync -a --delete "${ENTRYJS_ROOT_DIR}/images/" "${WWW}/lib/entryjs/images/" || true
+# media 폴더가 없을 수도 있으니 optional
+if [ -d "${ENTRYJS_ROOT_DIR}/media" ]; then
+  rsync -a --delete "${ENTRYJS_ROOT_DIR}/media/" "${WWW}/lib/entryjs/media/" || true
+else
+  mkdir -p "${WWW}/lib/entryjs/media"
+fi
+
+# entryjs 경로 별칭도 유지(기존 스크립트들 호환)
+mkdir -p "${WWW}/lib/entry-js"
+rsync -a --delete "${WWW}/lib/entryjs/" "${WWW}/lib/entry-js/" || true
+
+rm -rf "$TMP_ENTRYJS" || true
+log "OK   entryjs FULL copy complete"
+
+# ============================================================
+# 2) 필수 3rd-party libs (entryjs README 기준)  (병렬 5개)
+# ============================================================
+# lodash/jq/ui/createjs/velocity/codemirror
+job_spawn fetch_with_candidates "lib/lodash/dist/lodash.min.js" \
+  "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.10/lodash.min.js"
+
+job_spawn fetch_with_candidates "lib/jquery/jquery.min.js" \
+  "https://cdnjs.cloudflare.com/ajax/libs/jquery/1.9.1/jquery.min.js"
+
+job_spawn fetch_with_candidates "lib/jquery-ui/ui/minified/jquery-ui.min.js" \
+  "https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.10.4/jquery-ui.min.js"
+
+job_spawn fetch_with_candidates "lib/PreloadJS/lib/preloadjs-0.6.0.min.js" \
+  "https://code.createjs.com/preloadjs-0.6.0.min.js"
+
+job_spawn fetch_with_candidates "lib/EaselJS/lib/easeljs-0.8.0.min.js" \
+  "https://code.createjs.com/easeljs-0.8.0.min.js"
+
+job_spawn fetch_with_candidates "lib/SoundJS/lib/soundjs-0.6.0.min.js" \
+  "https://code.createjs.com/soundjs-0.6.0.min.js"
+
+# flashaudioplugin은 종종 404 → optional
+job_spawn fetch_optional "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js" \
+  "https://code.createjs.com/flashaudioplugin-0.6.0.min.js"
+
+job_spawn fetch_with_candidates "lib/velocity/velocity.min.js" \
+  "https://cdnjs.cloudflare.com/ajax/libs/velocity/1.2.3/velocity.min.js"
+
+job_spawn fetch_with_candidates "lib/codemirror/codemirror.css" \
+  "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css"
+
+job_spawn fetch_with_candidates "lib/codemirror/codemirror.js" \
+  "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"
+
+job_spawn fetch_optional "lib/codemirror/vim.js" \
+  "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/keymap/vim.min.js"
+
+# locales (optional but nice)
+job_spawn fetch_optional "js/ws/locales.js" \
+  "https://playentry.org/js/ws/locales.js"
+
+# legacy-video module
+job_spawn fetch_with_candidates "lib/module/legacy-video/index.js" \
+  "https://entry-cdn.pstatic.net/module/legacy-video/index.js" \
+  "https://playentry.org/module/legacy-video/index.js"
+
+job_wait_all || true
+
+# ============================================================
+# 3) entry-tool / entry-paint (CDN에서 가져오되, 이미지/정적리소스는 폴더째 가져오기)
+#    - npm registry에서 @entrylabs/* 는 404가 날 수 있어 CDN 우선
+# ============================================================
+job_spawn fetch_with_candidates "lib/entry-tool/dist/entry-tool.js" \
+  "https://playentry.org/lib/entry-tool/dist/entry-tool.js" \
+  "https://entry-cdn.pstatic.net/lib/entry-tool/dist/entry-tool.js"
+
+job_spawn fetch_with_candidates "lib/entry-tool/dist/entry-tool.css" \
+  "https://playentry.org/lib/entry-tool/dist/entry-tool.css" \
+  "https://entry-cdn.pstatic.net/lib/entry-tool/dist/entry-tool.css"
+
+job_spawn fetch_with_candidates "lib/entry-paint/dist/static/js/entry-paint.js" \
+  "https://playentry.org/lib/entry-paint/dist/static/js/entry-paint.js" \
+  "https://entry-cdn.pstatic.net/lib/entry-paint/dist/static/js/entry-paint.js"
+
+job_wait_all || true
+
+# ============================================================
+# 4) /uploads/* (폰트 등) - "절대경로 mkdir" 금지: www/uploads 로 저장
+#    - entryjs initOptions fonts에서 /uploads/font/... 를 쓰는 케이스가 많아서
+# ============================================================
+# (필수는 아니지만, 있으면 깨지는 UI가 줄어듬. 전부 optional 처리)
+fetch_optional "uploads/font/NanumSquare_acB.ttf" \
+  "https://playentry.org/uploads/font/NanumSquare_acB.ttf" \
+  "https://entry-cdn.pstatic.net/uploads/font/NanumSquare_acB.ttf"
+
+fetch_optional "uploads/font/NanumSquare_acB.woff" \
+  "https://playentry.org/uploads/font/NanumSquare_acB.woff" \
+  "https://entry-cdn.pstatic.net/uploads/font/NanumSquare_acB.woff"
+
+fetch_optional "uploads/font/NanumSquare_acR.ttf" \
+  "https://playentry.org/uploads/font/NanumSquare_acR.ttf" \
+  "https://entry-cdn.pstatic.net/uploads/font/NanumSquare_acR.ttf"
+
+fetch_optional "uploads/font/NanumSquare_acR.woff" \
+  "https://playentry.org/uploads/font/NanumSquare_acR.woff" \
+  "https://entry-cdn.pstatic.net/uploads/font/NanumSquare_acR.woff"
+
+# ============================================================
+# 5) 결과 체크 (이미지/미디어가 실제로 존재하는지)
+# ============================================================
+missing=0
+if [ ! -d "${WWW}/lib/entryjs/images" ] || [ -z "$(ls -A "${WWW}/lib/entryjs/images" 2>/dev/null || true)" ]; then
+  bigwarn "entryjs images directory is empty -> images will not show"
+  missing=1
+fi
+if [ ! -d "${WWW}/lib/entryjs/dist" ] || [ ! -f "${WWW}/lib/entryjs/dist/entry.min.js" ]; then
+  bigwarn "entryjs dist missing -> entry cannot boot"
+  missing=1
+fi
+
+if [ "$missing" -eq 0 ]; then
+  log "✅ FETCH SUMMARY: entryjs FULL + libs OK (images/media included)"
+else
+  bigwarn "FETCH SUMMARY: some critical folders missing (check logs above)"
+fi
+
 exit 0
