@@ -242,12 +242,7 @@ if (window.EntryStatic) {
     }
 
     document.addEventListener("DOMContentLoaded", () => {
-      boot().catch(e => {
-        bootLine("Boot Error", "bad");
-        bootLine(String(e && e.stack ? e.stack : e), "bad");
-      });
-      // === DEBUG: 이미지 요청 경로 찍기(경로 문제 확정용) ===
-(() => {
+      (() => {
   const desc = Object.getOwnPropertyDescriptor(Image.prototype, "src");
   if (!desc || !desc.set) return;
   Object.defineProperty(Image.prototype, "src", {
@@ -257,6 +252,12 @@ if (window.EntryStatic) {
     }
   });
 })();
+      boot().catch(e => {
+        bootLine("Boot Error", "bad");
+        bootLine(String(e && e.stack ? e.stack : e), "bad");
+      });
+      // === DEBUG: 이미지 요청 경로 찍기(경로 문제 확정용) ===
+
     });
   </script>
 </head>
