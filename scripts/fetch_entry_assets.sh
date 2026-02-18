@@ -663,4 +663,77 @@ patch_dot_refs() {
 }
 
 # ============================================================
+# ✅ FIX: filenames ending with "." break in Android/Capacitor (URL normalization + MIME)
+# - If we have files like images/ai_on. then runtime may request ai_on (dot stripped)
+# - Also no extension -> wrong MIME -> image/audio won't render
+# So: create REAL copies with proper extension (png/svg/jpg/gif/webp) + also dotless alias
+# ============================================================
+bigwarn "FIX: dot-ending assets -> create .png/.svg/... copies + dotless alias (Android safe)"
+
+guess_ext_by_magic() {
+  local f="$1"
+  # read first 16 bytes as hex
+  local hx
+  hx="$(xxd -p -l 16 "$f" 2>/dev/null | tr -d '\n' || true)"
+
+  # PNG: 89504e470d0a1a0a
+  if [[ "$hx" == 89504e470d0a1a0a* ]]; then echo "png"; return; fi
+  # JPG: ffd8ff
+  if [[ "$hx" == ffd8ff* ]]; then echo "jpg"; return; fi
+  # GIF: 474946383761 or 474946383961
+  if [[ "$hx" == 4749463837* || "$hx" == 4749463839* ]]; then echo "gif"; return; fi
+  # WEBP: "RIFF"...."WEBP" (52494646....57454250)
+  if [[ "$hx" == 52494646* ]]; then
+    if grep -aq "WEBP" "$f" 2>/dev/null; then echo "webp"; return; fi
+  fi
+  # SVG: starts with <svg or <?xml ... <svg
+  if head -c 512 "$f" 2>/dev/null | grep -aq "<svg"; then echo "svg"; return; fi
+
+  # default
+  echo "png"
+}
+
+make_aliases_for_dot_files() {
+  local base="$1"   # e.g. $WWW/images or $WWW/media
+  [ -d "$base" ] || return 0
+
+  # find files whose name ends with a dot.
+  # -print0 safe
+  while IFS= read -r -d '' f; do
+    # original: .../name.
+    local dir bn stem ext dst1 dst2
+    dir="$(dirname "$f")"
+    bn="$(basename "$f")"       # name.
+    stem="${bn%.}"              # name
+
+    # 1) dotless alias: name  (for servers that strip trailing dot)
+    dst1="$dir/$stem"
+    if [ ! -s "$dst1" ]; then
+      cp -a "$f" "$dst1" 2>/dev/null || true
+    fi
+
+    # 2) extension alias: name.png / name.svg / name.jpg ... (for correct MIME)
+    ext="$(guess_ext_by_magic "$f")"
+    dst2="$dir/$stem.$ext"
+    if [ ! -s "$dst2" ]; then
+      cp -a "$f" "$dst2" 2>/dev/null || true
+    fi
+  done < <(find "$base" -type f -name '*.' -print0 2>/dev/null)
+}
+
+# run for all relevant roots
+make_aliases_for_dot_files "$WWW/images"
+make_aliases_for_dot_files "$WWW/media"
+make_aliases_for_dot_files "$WWW/uploads"
+make_aliases_for_dot_files "$WWW/lib/entryjs/images"
+make_aliases_for_dot_files "$WWW/lib/entryjs/media"
+make_aliases_for_dot_files "$WWW/lib/entry-js/images"
+make_aliases_for_dot_files "$WWW/lib/entry-js/media"
+
+# quick verify: dot-ending examples should now have .png too
+log "VERIFY dot-ending -> png alias sample (ai_on)"
+ls -la "$WWW/images/ai_on." 2>/dev/null || true
+ls -la "$WWW/images/ai_on.png" 2>/dev/null || true
+# ============================================================
+# ============================================================
 exit 0
