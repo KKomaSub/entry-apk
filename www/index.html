@@ -174,21 +174,37 @@ async function testAsset(url){
         const r = await loadJS(src);
         bootLine((r.ok ? "OK   JS   " : "MISS(opt) ") + src, r.ok ? "ok" : "dim");
       }
- function normalizeAssetUrl(u, BASE) {
-    if (!u || typeof u !== "string") return u;
+function normalizeAssetUrl(u, BASE) {
+  if (typeof u !== "string" || !u) return u;
 
-    // 이미 data/blob/http(s)/capacitor/file 인 건 건드리지 않음
-    if (/^(data:|blob:|https?:|capacitor:|file:)/i.test(u)) return u;
+  // data/blob/http(s)/capacitor/file 는 그대로
+  const c0 = u.charCodeAt(0);
+  if (
+    u.startsWith("data:") || u.startsWith("blob:") ||
+    u.startsWith("http://") || u.startsWith("https://") ||
+    u.startsWith("capacitor:") || u.startsWith("file:")
+  ) return u;
 
-    // "/images/xxx" "/media/xxx" "/uploads/xxx" 를 BASE+"images/xxx" 로 통일 (하위폴더 포함)
-    u = u.replace(/^\/(images|media|uploads)\//, (_, p) => BASE + p + "/");
-
-    // "./images/xxx" -> BASE+"images/xxx"
-    u = u.replace(/^\.\.\/(images|media|uploads)\//, (_, p) => BASE + p + "/");
-    u = u.replace(/^\.(\/)?(images|media|uploads)\//, (_, __, p) => BASE + p + "/");
-
+  // 빠른 prefix 처리 (/images, /media, /uploads)
+  if (c0 === 47 /*'/'*/) {
+    if (u.startsWith("/images/"))  return BASE + "images/"  + u.slice(8);
+    if (u.startsWith("/media/"))   return BASE + "media/"   + u.slice(7);
+    if (u.startsWith("/uploads/")) return BASE + "uploads/" + u.slice(9);
     return u;
   }
+
+  // ./images , ./media , ./uploads
+  if (u.startsWith("./images/"))   return BASE + "images/"  + u.slice(9);
+  if (u.startsWith("./media/"))    return BASE + "media/"   + u.slice(8);
+  if (u.startsWith("./uploads/"))  return BASE + "uploads/" + u.slice(10);
+
+  // ../images , ../media , ../uploads
+  if (u.startsWith("../images/"))  return BASE + "images/"  + u.slice(10);
+  if (u.startsWith("../media/"))   return BASE + "media/"   + u.slice(9);
+  if (u.startsWith("../uploads/")) return BASE + "uploads/" + u.slice(11);
+
+  return u;
+}
 
   function installHardAssetRewrite(BASE) {
     // 1) <img src>, <audio src>, <video src>, <source src> 등
