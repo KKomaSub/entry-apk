@@ -415,15 +415,30 @@ MEDIA_SRC2="$WWW/lib/entry-js/media"
 mirror_tree "$MEDIA_SRC1" "$WWW/media"
 mirror_tree "$MEDIA_SRC2" "$WWW/media"
 
-# verify a known subfolder case (your example)
-if [ -f "$WWW/images/icon/block_icon.png" ]; then
-  log "OK  FIXED: images/icon/block_icon.png exists"
+# verify a known subfolder case (requested)
+VERIFY_FILE="$WWW/images/block_icon/ai_hand_icon.svg"
+log "VERIFY: $VERIFY_FILE ?"
+
+if [ -f "$VERIFY_FILE" ]; then
+  log "OK  FIXED: images/block_icon/ai_hand_icon.svg exists"
+  # show size for sanity
+  log "SIZE: $(stat -c%s "$VERIFY_FILE" 2>/dev/null || wc -c < "$VERIFY_FILE") bytes"
 else
-  bigwarn "STILL MISSING: images/icon/block_icon.png (means source package truly doesn't contain that path; request path may differ)"
-  # quick hint: list icon folder if exists
-  if [ -d "$WWW/images/icon" ]; then
-    log "LIST www/images/icon (top 50):"
-    ls -1 "$WWW/images/icon" | head -n 50 || true
+  bigwarn "STILL MISSING: images/block_icon/ai_hand_icon.svg"
+  # help: show what we actually have under block_icon
+  if [ -d "$WWW/images/block_icon" ]; then
+    log "LIST www/images/block_icon (top 80):"
+    ls -1 "$WWW/images/block_icon" | head -n 80 || true
+  else
+    bigwarn "DIR MISSING: $WWW/images/block_icon"
+  fi
+
+  # help: show if it exists inside entryjs package but not mirrored
+  if [ -f "$WWW/lib/entryjs/images/block_icon/ai_hand_icon.svg" ]; then
+    bigwarn "FOUND IN lib/entryjs/images BUT NOT IN www/images (mirror step failed?)"
+  fi
+  if [ -f "$WWW/lib/entry-js/images/block_icon/ai_hand_icon.svg" ]; then
+    bigwarn "FOUND IN lib/entry-js/images BUT NOT IN www/images (mirror step failed?)"
   fi
 fi
 
