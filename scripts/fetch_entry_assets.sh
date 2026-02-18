@@ -634,65 +634,33 @@ detect_ext_by_magic() {
   # default: png (Entry assets are overwhelmingly png)
   echo "png"
 }
-
-dup_dot_files() {
-  local baseDir="$1"
-  [ -d "$baseDir" ] || return 0
-
-  # find files whose name ends with '.' (no extension)
-  while IFS= read -r -d '' f; do
-    local ext out
-    ext="$(detect_ext_by_magic "$f")"
-    out="${f%.}.${ext}"     # "ai_on." -> "ai_on.png"
-    if [ ! -s "$out" ]; then
-      cp -f "$f" "$out" || true
-      log "DUP  $(realpath --relative-to="$WWW" "$f") -> $(realpath --relative-to="$WWW" "$out")"
-    fi
-  done < <(find "$baseDir" -type f -name '*.' -print0 2>/dev/null)
+# (A) 먼저 이미 망가진 pngpng/jpgjpg 등을 되돌리는 1회 복구
+fix_double_ext() {
+  local f="$1"
+  [ -f "$f" ] || return 0
+  sed -i -E \
+    's@\.pngpng([^A-Za-z0-9]|$)@.png\1@g;
+     s@\.jpgjpg([^A-Za-z0-9]|$)@.jpg\1@g;
+     s@\.jpegjpeg([^A-Za-z0-9]|$)@.jpeg\1@g;
+     s@\.gifgif([^A-Za-z0-9]|$)@.gif\1@g;
+     s@\.svgsvg([^A-Za-z0-9]|$)@.svg\1@g;
+     s@\.webpwebp([^A-Za-z0-9]|$)@.webp\1@g' "$f" || true
 }
 
-# 1) duplicate dot-ending in www/images and www/media and also inside lib copies (safe)
-dup_dot_files "$WWW/images"
-dup_dot_files "$WWW/media"
-dup_dot_files "$WWW/lib/entryjs/images"
-dup_dot_files "$WWW/lib/entryjs/media"
-dup_dot_files "$WWW/lib/entry-js/images"
-dup_dot_files "$WWW/lib/entry-js/media"
-
-# 2) patch references in JS/CSS/HTML: "/images/NAME." -> "/images/NAME.png"
-# (only for dot-ending tokens)
+# (B) "끝이 점(.)인 경로"만 -> .png 로 치환 (중간 dot는 절대 건드리지 않음)
 patch_dot_refs() {
   local f="$1"
   [ -f "$f" ] || return 0
-  # replace /images/foo.  -> /images/foo.png
-  # replace /media/foo.   -> /media/foo.png
-  # (keep query string if any is already stripped in your scan; safe for bundles)
-  sed -i -E 's@(/images/[A-Za-z0-9_./-]+)\.@\1.png@g; s@(/media/[A-Za-z0-9_./-]+)\.@\1.png@g' "$f" || true
+
+  # 1) 먼저 pngpng 같은 손상 복구
+  fix_double_ext "$f"
+
+  # 2) dot-ending only:
+  #    /images/abc.  + (따옴표/괄호/공백/?/#/끝) => /images/abc.png + 그 구분자
+  sed -i -E \
+    's@(/images/[^"'\''\)\s?#]+)\.([\"'\''\)\s?#]|$)@\1.png\2@g;
+     s@(/media/[^"'\''\)\s?#]+)\.([\"'\''\)\s?#]|$)@\1.png\2@g' "$f" || true
 }
 
-# patch the main bundles + css + index
-PATCH_TARGETS=(
-  "$WWW/index.html"
-  "$WWW/lib/entryjs/dist/entry.min.js"
-  "$WWW/lib/entryjs/dist/entry.css"
-  "$WWW/lib/entry-tool/dist/entry-tool.css"
-  "$WWW/lib/entry-paint/dist/static/js/entry-paint.js"
-  "$WWW/lib/entryjs/extern/util/static.js"
-)
-
-for f in "${PATCH_TARGETS[@]}"; do
-  log "PATCH dot-refs: $f"
-  patch_dot_refs "$f"
-done
-
-# 3) verify a representative dot-ending asset now has .png and is reachable in filesystem
-if [ -f "$WWW/images/ai_on.png" ]; then
-  log "OK  dot-fix created: images/ai_on.png"
-else
-  bigwarn "dot-fix did not create images/ai_on.png (check if images/ai_on. exists)"
-fi
-
-log "COUNT www/images files = $(find "$WWW/images" -type f 2>/dev/null | wc -l | tr -d ' ')"
-log "SIZE  www/images = $(du -sh "$WWW/images" 2>/dev/null | awk '{print $1}')"
 # ============================================================
 exit 0
