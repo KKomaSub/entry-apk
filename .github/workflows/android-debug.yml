@@ -36,22 +36,9 @@ jobs:
 
       - name: Copy web assets to Android
         run: |
+          npx cap sync android
           npx cap copy android
           du -sh android/app/src/main/assets/public || true
-
-          # ✅ ADD HERE: force recursive copy of nested assets (images/media/uploads)
-          WEB_ASSETS="android/app/src/main/assets/public"
-          mkdir -p "$WEB_ASSETS"
-
-          rm -rf "$WEB_ASSETS/images" "$WEB_ASSETS/media" "$WEB_ASSETS/uploads" || true
-          cp -a "www/images"  "$WEB_ASSETS/" || true
-          cp -a "www/media"   "$WEB_ASSETS/" || true
-          cp -a "www/uploads" "$WEB_ASSETS/" || true
-
-          echo "== verify nested =="
-          ls -la "$WEB_ASSETS/images/block_icon/ai_hand_icon.svg" || true
-          find "$WEB_ASSETS/images" -type f | wc -l || true
-          du -sh "$WEB_ASSETS/images" || true
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -62,7 +49,7 @@ jobs:
       - name: Build Debug APK
         run: |
           cd android
-          ./gradlew assembleDebug
+          ./gradlew clean assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
