@@ -445,4 +445,41 @@ fi
 log "SIZE www/images = $(du -sh "$WWW/images" 2>/dev/null | awk '{print $1}')"
 log "COUNT www/images files = $(find "$WWW/images" -type f 2>/dev/null | wc -l | tr -d ' ')"
 # ============================================================
+# -----------------------------------------------------------------------------
+# FIX: subfolder images 404 (alias paths)
+# - Example: images/btn.png works but images/icon/* or other nested paths 404
+# - We keep original assets, and ALSO create alias folders that Entry may request.
+# -----------------------------------------------------------------------------
+bigwarn "FIX: alias-copy subfolder images to match legacy request paths (no other changes)"
+
+# 1) ensure target dirs exist
+mkdir -p "$WWW/images/icon" "$WWW/lib/entryjs/images/icon" "$WWW/lib/entry-js/images/icon" || true
+
+# 2) If block_icon exists but icon/block_icon is requested, mirror it
+if [ -d "$WWW/images/block_icon" ] && [ ! -d "$WWW/images/icon/block_icon" ]; then
+  mkdir -p "$WWW/images/icon/block_icon"
+  cp -a "$WWW/images/block_icon/." "$WWW/images/icon/block_icon/" 2>/dev/null || true
+  log "ALIAS COPY OK: www/images/block_icon -> www/images/icon/block_icon"
+fi
+
+if [ -d "$WWW/lib/entryjs/images/block_icon" ] && [ ! -d "$WWW/lib/entryjs/images/icon/block_icon" ]; then
+  mkdir -p "$WWW/lib/entryjs/images/icon/block_icon"
+  cp -a "$WWW/lib/entryjs/images/block_icon/." "$WWW/lib/entryjs/images/icon/block_icon/" 2>/dev/null || true
+  log "ALIAS COPY OK: lib/entryjs/images/block_icon -> lib/entryjs/images/icon/block_icon"
+fi
+
+if [ -d "$WWW/lib/entry-js/images/block_icon" ] && [ ! -d "$WWW/lib/entry-js/images/icon/block_icon" ]; then
+  mkdir -p "$WWW/lib/entry-js/images/icon/block_icon"
+  cp -a "$WWW/lib/entry-js/images/block_icon/." "$WWW/lib/entry-js/images/icon/block_icon/" 2>/dev/null || true
+  log "ALIAS COPY OK: lib/entry-js/images/block_icon -> lib/entry-js/images/icon/block_icon"
+fi
+
+# 3) Verify your exact example after aliasing
+VERIFY_FILE="$WWW/images/icon/block_icon/ai_hand_icon.svg"
+log "VERIFY (alias path): $VERIFY_FILE ?"
+if [ -f "$VERIFY_FILE" ]; then
+  log "OK  alias exists: images/icon/block_icon/ai_hand_icon.svg"
+else
+  bigwarn "STILL MISSING alias: images/icon/block_icon/ai_hand_icon.svg (check which path Entry requests in Network tab)"
+fi
 exit 0
