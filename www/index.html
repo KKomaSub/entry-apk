@@ -1,269 +1,276 @@
 <!doctype html>
 <html lang="ko">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Entry Offline Editor</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Entry Offline Editor</title>
 
-<style>
-html,body{margin:0;height:100%;overflow:hidden;background:#111}
-#entryContainer{width:100%;height:100%;background:#f5f5f5}
-#boot{
-  position:fixed;inset:0;background:#000;color:#0f0;
-  font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  padding:12px;white-space:pre-wrap;overflow:auto;z-index:9999
-}
-.bad{color:#ff5c5c}
-.dim{opacity:.85}
-.ok{color:#66ff66}
-</style>
+  <style>
+    html,body{margin:0;height:100%;overflow:hidden;background:#111}
+    #entryContainer{width:100%;height:100%;background:#f5f5f5}
+    #boot{
+      position:fixed;inset:0;background:#000;color:#0f0;
+      font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      padding:12px;white-space:pre-wrap;overflow:auto;z-index:9999
+    }
+    .bad{color:#ff5c5c}
+    .dim{opacity:.85}
+    .ok{color:#66ff66}
+  </style>
 
-<script>
-function bootLine(t, cls=""){
-  const el=document.getElementById("boot");
-  if(!el) return;
-  const d=document.createElement("div");
-  if(cls) d.className=cls;
-  d.textContent=t;
-  el.appendChild(d);
-  el.scrollTop=el.scrollHeight;
-}
-window.onerror=function(m,s,l,c,e){
-  bootLine("JS ERROR:","bad");
-  bootLine(String(e && e.stack ? e.stack : m),"bad");
-};
-
-async function probeBase(prefix){
-  try{
-    const r=await fetch(prefix+"lib/lodash/dist/lodash.min.js",{method:"GET",cache:"no-store"});
-    return r.ok;
-  }catch(_){ return false; }
-}
-function loadJS(src){
-  return new Promise(resolve=>{
-    const s=document.createElement("script");
-    s.src=src;
-    s.onload=()=>resolve({ok:true,src});
-    s.onerror=()=>resolve({ok:false,src});
-    document.head.appendChild(s);
-  });
-}
-function loadCSS(href){
-  return new Promise(resolve=>{
-    const l=document.createElement("link");
-    l.rel="stylesheet";
-    l.href=href;
-    l.onload=()=>resolve({ok:true,href});
-    l.onerror=()=>resolve({ok:false,href});
-    document.head.appendChild(l);
-  });
-}
-function must(cond,msg){
-  if(!cond) throw new Error(msg);
-  bootLine("OK   "+msg,"ok");
-}
-
-async function boot(){
-  // ✅ BASE 자동 탐지
-  const candidates=["./","/","/public/","/www/"];
-  let BASE="./";
-  for(const c of candidates){
-    bootLine("PROBE BASE: "+c,"dim");
-    if(await probeBase(c)){ BASE=c; break; }
-  }
-  bootLine("BASE = "+BASE,"ok");
-
-  // ✅ 절대경로(/로 시작) 요청을 BASE 기준으로 보정
-  const __rewriteUrl = (u) => {
-    if (!u || typeof u !== "string") return u;
-    if (/^(https?:|data:|blob:|file:)/i.test(u)) return u;
-    if (u.startsWith("/")) return BASE + u.slice(1);
-    return u;
-  };
-
-  const __origFetch = window.fetch?.bind(window);
-  if (__origFetch) {
-    window.fetch = (input, init) => {
-      try {
-        if (typeof input === "string") return __origFetch(__rewriteUrl(input), init);
-        if (input && typeof input.url === "string") {
-          const url = __rewriteUrl(input.url);
-          if (url !== input.url) return __origFetch(new Request(url, input), init);
-        }
-      } catch (_) {}
-      return __origFetch(input, init);
+  <script>
+    function bootLine(t, cls="") {
+      const el = document.getElementById("boot");
+      if (!el) return;
+      const d = document.createElement("div");
+      if (cls) d.className = cls;
+      d.textContent = t;
+      el.appendChild(d);
+      el.scrollTop = el.scrollHeight;
+    }
+    window.onerror = function (m, s, l, c, e) {
+      bootLine("JS ERROR:", "bad");
+      bootLine(String(e && e.stack ? e.stack : m), "bad");
     };
-  }
 
-  const __origOpen = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function(method, url, ...rest){
-    try { url = __rewriteUrl(url); } catch (_) {}
-    return __origOpen.call(this, method, url, ...rest);
-  };
-
-  const __desc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
-  if (__desc && __desc.set) {
-    Object.defineProperty(HTMLImageElement.prototype, "src", {
-      get: __desc.get,
-      set(v){ return __desc.set.call(this, __rewriteUrl(v)); }
-    });
-  }
-  bootLine("PATCH URL rewrite: /... -> BASE/...", "ok");
-
-  // ✅ CSS
-  const cssList=[
-    BASE+"lib/entry-tool/dist/entry-tool.css",
-    BASE+"lib/entryjs/dist/entry.css",
-    BASE+"lib/codemirror/codemirror.css",
-    BASE+"overrides.css",
-  ];
-  for(const href of cssList){
-    const r=await loadCSS(href);
-    bootLine((r.ok?"OK   CSS  ":"MISS CSS ")+href, r.ok?"ok":"bad");
-  }
-
-  // ✅ locales optional
-  {
-    const src=BASE+"js/ws/locales.js";
-    const r=await loadJS(src);
-    bootLine((r.ok?"OK   JS   ":"MISS(opt) ")+src, r.ok?"ok":"dim");
-  }
-
-  // ✅ JS (순서)
-  const jsList=[
-    BASE+"lib/lodash/dist/lodash.min.js",
-
-    BASE+"lib/jquery/jquery.min.js",
-    BASE+"lib/jquery-ui/ui/minified/jquery-ui.min.js",
-
-    BASE+"lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
-    BASE+"lib/EaselJS/lib/easeljs-0.8.0.min.js",
-    BASE+"lib/SoundJS/lib/soundjs-0.6.0.min.js",
-    BASE+"lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js", // optional
-
-    BASE+"lib/velocity/velocity.min.js",
-
-    BASE+"lib/codemirror/codemirror.js",
-    BASE+"lib/codemirror/vim.js", // optional
-
-    // ✅ React/ReactDOM: sound-editor가 필요로 함 (여기서 추가!)
-    BASE+"lib/react/react.production.min.js",
-    BASE+"lib/react/react-dom.production.min.js",
-
-    BASE+"lib/entry-tool/dist/entry-tool.js",
-
-    BASE+"lib/entryjs/extern/lang/ko.js",
-    BASE+"lib/entryjs/extern/util/static.js",
-    BASE+"lib/entryjs/extern/util/handle.js",
-    BASE+"lib/entryjs/extern/util/bignumber.min.js",
-
-    BASE+"lib/module/legacy-video/index.js",
-
-    // ✅ sound editor는 React 이후
-    BASE+"lib/external/sound/sound-editor.js",
-
-    BASE+"lib/entryjs/dist/entry.min.js",
-    BASE+"lib/entry-paint/dist/static/js/entry-paint.js",
-  ];
-
-  for(const src of jsList){
-    const optional = src.includes("flashaudioplugin") || src.endsWith("/vim.js");
-    const r=await loadJS(src);
-    bootLine((r.ok?"OK   JS   ":(optional?"MISS(opt) ":"MISS     "))+src,
-      r.ok?"ok":(optional?"dim":"bad"));
-
-    if (r.ok && src.includes("/lodash.min.js")) {
-      try{
-        if (window._ && !_.contains) _.contains = _.includes;
-        if (window._ && !_.findWhere) _.findWhere = (arr, attrs) => _.find(arr, attrs);
-        bootLine("PATCH lodash: _.contains/_.findWhere ok", "ok");
-      }catch(e){
-        bootLine("PATCH lodash failed: "+String(e), "bad");
+    // PATCH: If some libs use absolute "/..." URLs, rewrite them to BASE + "..."
+    // (Capacitor / local server often serves under "./")
+    (function patchFetchAndXhrForLeadingSlash() {
+      const origFetch = window.fetch;
+      if (origFetch) {
+        window.fetch = function(input, init) {
+          try {
+            if (typeof input === "string" && input.startsWith("/")) {
+              const base = (window.__ENTRY_BASE__ || "./");
+              return origFetch.call(this, base.replace(/\/?$/, "/") + input.replace(/^\//, ""), init);
+            }
+          } catch(_) {}
+          return origFetch.call(this, input, init);
+        };
       }
-    }
 
-    if (r.ok && src.endsWith("extern/util/static.js")) {
-      try{
-        if (window.EntryStatic) {
-          window.EntryStatic.imagePath = BASE + "lib/entryjs/images/";
-          window.EntryStatic.mediaPath = BASE + "lib/entryjs/images/";
-          bootLine("PATCH EntryStatic.imagePath/mediaPath -> local", "ok");
-        }
-      }catch(e){
-        bootLine("PATCH EntryStatic failed: "+String(e),"bad");
-      }
-    }
-  }
-
-  // ✅ sound-editor가 여전히 망가졌다면(React 미스 등) 최소 스텁으로라도 살림
-  try{
-    if (!window.EntrySoundEditor) {
-      window.EntrySoundEditor = {
-        renderSoundEditor(){},
-        registExportFunction(){}
+      const XHROpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function(method, url) {
+        try {
+          if (typeof url === "string" && url.startsWith("/")) {
+            const base = (window.__ENTRY_BASE__ || "./");
+            url = base.replace(/\/?$/, "/") + url.replace(/^\//, "");
+          }
+        } catch(_) {}
+        return XHROpen.apply(this, arguments);
       };
-      bootLine("PATCH EntrySoundEditor: fallback stub applied", "dim");
-    } else {
-      if (typeof window.EntrySoundEditor.renderSoundEditor !== "function") {
-        window.EntrySoundEditor.renderSoundEditor = function(){};
-        bootLine("PATCH EntrySoundEditor.renderSoundEditor = noop", "dim");
-      }
-      if (typeof window.EntrySoundEditor.registExportFunction !== "function") {
-        window.EntrySoundEditor.registExportFunction = function(){};
-        bootLine("PATCH EntrySoundEditor.registExportFunction = noop", "dim");
+    })();
+
+    async function probeBase(prefix) {
+      const url = prefix + "lib/lodash/dist/lodash.min.js";
+      try {
+        const r = await fetch(url, { method: "GET", cache: "no-store" });
+        return r.ok;
+      } catch (_) {
+        return false;
       }
     }
-  }catch(e){
-    bootLine("PATCH EntrySoundEditor failed: "+String(e), "bad");
-  }
 
-  // ✅ 글로벌 체크
-  bootLine("_.memoize = "+(window._ ? typeof _.memoize : "N/A"), window._?"ok":"bad");
-  bootLine("$.fn.jquery = "+(window.$ && $.fn ? $.fn.jquery : "N/A"), (window.$ && $.fn)?"ok":"bad");
-  bootLine("createjs = "+(typeof window.createjs), window.createjs?"ok":"bad");
-  bootLine("Lang = "+(typeof window.Lang), window.Lang?"ok":"bad");
-  bootLine("EntryTool = "+(typeof window.EntryTool), window.EntryTool?"ok":"bad");
-  bootLine("EntryVideoLegacy = "+(typeof window.EntryVideoLegacy), window.EntryVideoLegacy?"ok":"bad");
-  bootLine("EntryStatic = "+(typeof window.EntryStatic), window.EntryStatic?"ok":"bad");
-  bootLine("React = "+(typeof window.React), window.React?"ok":"bad");
-  bootLine("ReactDOM = "+(typeof window.ReactDOM), window.ReactDOM?"ok":"bad");
-  bootLine("EntrySoundEditor = "+(typeof window.EntrySoundEditor), window.EntrySoundEditor?"ok":"bad");
-  bootLine("Entry.init = "+(window.Entry ? typeof window.Entry.init : "N/A"),
-    (window.Entry && typeof window.Entry.init==="function")?"ok":"bad");
+    function loadJS(src) {
+      return new Promise((resolve) => {
+        const s = document.createElement("script");
+        s.src = src;
+        s.onload = () => resolve({ ok: true, src });
+        s.onerror = () => resolve({ ok: false, src });
+        document.head.appendChild(s);
+      });
+    }
 
-  must(window._,"lodash(_)");
-  must(window.$,"jQuery($)");
-  must(window.createjs,"createjs");
-  must(window.Lang,"Lang");
-  must(window.EntryTool,"EntryTool");
-  must(window.EntryVideoLegacy,"EntryVideoLegacy");
-  must(window.EntryStatic,"EntryStatic");
-  // ✅ 여기서부터는 "가능하면"을 보장: React 없으면 stub로라도 Entry 진행
-  must(window.EntrySoundEditor,"EntrySoundEditor");
-  must(window.Entry && typeof window.Entry.init==="function","Entry.init");
+    function loadCSS(href) {
+      return new Promise((resolve) => {
+        const l = document.createElement("link");
+        l.rel = "stylesheet";
+        l.href = href;
+        l.onload = () => resolve({ ok: true, href });
+        l.onerror = () => resolve({ ok: false, href });
+        document.head.appendChild(l);
+      });
+    }
 
-  bootLine("Starting Entry.init …","dim");
+    function must(cond, msg){
+      if(!cond) throw new Error(msg);
+      bootLine("OK   " + msg, "ok");
+    }
 
-  Entry.init(document.getElementById("entryContainer"),{
-    type:"workspace",
-    libDir: BASE + "lib",
-    textCodingEnable: true
-  });
+    function patchLodashCompat() {
+      // Entry(구버전) 일부가 _.contains / _.findWhere 기대
+      if (window._) {
+        if (typeof _.contains !== "function" && typeof _.includes === "function") {
+          _.contains = _.includes;
+        }
+        if (typeof _.findWhere !== "function" && typeof _.find === "function") {
+          _.findWhere = function(arr, attrs){
+            return _.find(arr, function(o){
+              for (var k in attrs) if (o[k] !== attrs[k]) return false;
+              return true;
+            });
+          };
+        }
+        bootLine("PATCH lodash: _.contains/_.findWhere ok", "ok");
+      }
+    }
 
-  Entry.loadProject();
-  const bootEl=document.getElementById("boot");
-  if(bootEl) bootEl.remove();
-}
+    function patchEntryStaticToLocal(BASE) {
+      // EntryStatic이 로컬 images/media를 보게 강제
+      if (window.EntryStatic) {
+        const b = BASE.replace(/\/?$/, "/");
+        try {
+          window.EntryStatic.imagePath = b + "lib/entryjs/images/";
+          window.EntryStatic.mediaPath = b + "lib/entryjs/media/";
+          bootLine("PATCH EntryStatic.imagePath/mediaPath -> local", "ok");
+        } catch(_) {}
+      }
+    }
 
-document.addEventListener("DOMContentLoaded",()=>{
-  boot().catch(e=>{
-    bootLine("Boot Error","bad");
-    bootLine(String(e && e.stack ? e.stack : e),"bad");
-  });
-});
-</script>
+    async function boot() {
+      const candidates = ["./", "/", "/public/", "/www/"];
+      let BASE = "./";
+      for (const c of candidates) {
+        bootLine("PROBE BASE: " + c, "dim");
+        if (await probeBase(c)) { BASE = c; break; }
+      }
+      window.__ENTRY_BASE__ = BASE;
+      bootLine("BASE = " + BASE, "ok");
+      bootLine("PATCH URL rewrite: /... -> BASE/...", "ok");
+
+      // CSS
+      const cssList = [
+        BASE + "lib/entry-tool/dist/entry-tool.css",
+        BASE + "lib/entryjs/dist/entry.css",
+        BASE + "lib/codemirror/codemirror.css",
+        BASE + "overrides.css",
+      ];
+      for (const href of cssList) {
+        const r = await loadCSS(href);
+        bootLine((r.ok ? "OK   CSS  " : "MISS CSS ") + href, r.ok ? "ok" : "bad");
+      }
+
+      // locales optional
+      {
+        const src = BASE + "js/ws/locales.js";
+        const r = await loadJS(src);
+        bootLine((r.ok ? "OK   JS   " : "MISS(opt) ") + src, r.ok ? "ok" : "dim");
+      }
+
+      // Core libs (순서 중요)
+      const jsList = [
+        BASE + "lib/lodash/dist/lodash.min.js",
+
+        BASE + "lib/jquery/jquery.min.js",
+        BASE + "lib/jquery-ui/ui/minified/jquery-ui.min.js",
+
+        BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
+        BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
+        BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
+        BASE + "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js", // optional
+
+        BASE + "lib/velocity/velocity.min.js",
+
+        BASE + "lib/codemirror/codemirror.js",
+        BASE + "lib/codemirror/vim.js", // optional
+
+        // ✅ React/ReactDOM 먼저! (sound-editor 필수)
+        BASE + "lib/react/react.production.min.js",
+        BASE + "lib/react/react-dom.production.min.js",
+
+        BASE + "lib/entry-tool/dist/entry-tool.js",
+
+        BASE + "lib/entryjs/extern/lang/ko.js",
+        BASE + "lib/entryjs/extern/util/static.js",
+        BASE + "lib/entryjs/extern/util/handle.js",
+        BASE + "lib/entryjs/extern/util/bignumber.min.js",
+
+        BASE + "lib/module/legacy-video/index.js",
+      ];
+
+      for (const src of jsList) {
+        const optional = src.includes("flashaudioplugin") || src.endsWith("/vim.js");
+        const r = await loadJS(src);
+        bootLine(
+          (r.ok ? "OK   JS   " : (optional ? "MISS(opt) " : "MISS     ")) + src,
+          r.ok ? "ok" : (optional ? "dim" : "bad")
+        );
+
+        // lodash patch right after load
+        if (src.includes("lodash.min.js") && r.ok) patchLodashCompat();
+        // EntryStatic patch after static.js
+        if (src.endsWith("/extern/util/static.js") && r.ok) patchEntryStaticToLocal(BASE);
+      }
+
+      // ✅ sound-editor는 React가 있을 때만 로드 (없으면 Entry 내부가 꼬임)
+      const hasReact = !!window.React && !!window.ReactDOM;
+      bootLine("React = " + (typeof window.React), hasReact ? "ok" : "bad");
+      bootLine("ReactDOM = " + (typeof window.ReactDOM), hasReact ? "ok" : "bad");
+
+      if (hasReact) {
+        const se = await loadJS(BASE + "lib/external/sound/sound-editor.js");
+        bootLine((se.ok ? "OK   JS   " : "MISS     ") + (BASE + "lib/external/sound/sound-editor.js"), se.ok ? "ok" : "bad");
+      } else {
+        bootLine("SKIP sound-editor.js (React missing)", "dim");
+      }
+
+      // Entry core + paint
+      {
+        const r1 = await loadJS(BASE + "lib/entryjs/dist/entry.min.js");
+        bootLine((r1.ok ? "OK   JS   " : "MISS     ") + (BASE + "lib/entryjs/dist/entry.min.js"), r1.ok ? "ok" : "bad");
+        const r2 = await loadJS(BASE + "lib/entry-paint/dist/static/js/entry-paint.js");
+        bootLine((r2.ok ? "OK   JS   " : "MISS     ") + (BASE + "lib/entry-paint/dist/static/js/entry-paint.js"), r2.ok ? "ok" : "bad");
+      }
+
+      // Globals check
+      bootLine("_.memoize = " + (window._ ? typeof _.memoize : "N/A"), window._ ? "ok" : "bad");
+      bootLine("$.fn.jquery = " + (window.$ && $.fn ? $.fn.jquery : "N/A"), (window.$ && $.fn) ? "ok" : "bad");
+      bootLine("createjs = " + (typeof window.createjs), window.createjs ? "ok" : "bad");
+      bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
+      bootLine("EntryTool = " + (typeof window.EntryTool), window.EntryTool ? "ok" : "bad");
+      bootLine("EntryVideoLegacy = " + (typeof window.EntryVideoLegacy), window.EntryVideoLegacy ? "ok" : "bad");
+      bootLine("EntryStatic = " + (typeof window.EntryStatic), window.EntryStatic ? "ok" : "bad");
+      bootLine("EntrySoundEditor = " + (typeof window.EntrySoundEditor), window.EntrySoundEditor ? "ok" : "dim");
+      bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
+        (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
+
+      must(window._, "lodash(_)");
+      must(window.$, "jQuery($)");
+      must(window.createjs, "createjs");
+      must(window.Lang, "Lang");
+      must(window.EntryTool, "EntryTool");
+      must(window.EntryVideoLegacy, "EntryVideoLegacy");
+      must(window.EntryStatic, "EntryStatic");
+
+      // ✅ sound-editor는 선택 기능: React가 있으면 활성, 없으면 비활성 (Entry는 계속 구동)
+      if (hasReact) {
+        must(window.EntrySoundEditor, "EntrySoundEditor");
+      } else {
+        bootLine("EntrySoundEditor: disabled (React missing)", "dim");
+      }
+
+      must(window.Entry && typeof window.Entry.init === "function", "Entry.init");
+
+      bootLine("Starting Entry.init …", "dim");
+
+      Entry.init(document.getElementById("entryContainer"), {
+        type: "workspace",
+        libDir: BASE + "lib",
+        textCodingEnable: true
+      });
+
+      Entry.loadProject();
+      document.getElementById("boot").remove();
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      boot().catch(e => {
+        bootLine("Boot Error", "bad");
+        bootLine(String(e && e.stack ? e.stack : e), "bad");
+      });
+    });
+  </script>
 </head>
-
 <body>
   <div id="entryContainer"></div>
   <div id="boot">Entry Offline Editor
