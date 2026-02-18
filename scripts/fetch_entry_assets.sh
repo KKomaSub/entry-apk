@@ -89,7 +89,6 @@ mkdir -p \
   "$WWW/lib/entryjs/extern/util"
 
 # ---------- React (필수) ----------
-# entry.min.js 내부에서 SoundEditor(React 기반)를 기대하는 버전이 많아서 반드시 포함
 job_add "https://unpkg.com/react@16.14.0/umd/react.production.min.js" \
         "$WWW/lib/react/react.production.min.js" \
         "react 16.14.0"
@@ -164,7 +163,6 @@ job_add "https://entry-cdn.pstatic.net/module/legacy-video/index.js" \
         "$WWW/lib/module/legacy-video/index.js" "legacy-video/index.js"
 
 # ---------- sound-editor.js (가능하면 로컬화) ----------
-# 경로/버전이 바뀔 수 있어서 "시도만" 하고 실패해도 계속
 job_add "https://playentry.org/lib/external/sound/sound-editor.js" \
         "$WWW/lib/external/sound/sound-editor.js" "sound-editor.js (try 1, optional)"
 job_add "https://entry-cdn.pstatic.net/lib/external/sound/sound-editor.js" \
@@ -187,6 +185,7 @@ npm_extract_pkg () {
   local spec="$1" outdir="$2"
   mkdir -p "$outdir"
   log "NPM EXTRACT: $spec -> $outdir"
+  local tarball
   if ! tarball="$(npm pack "$spec" 2>/dev/null | tail -n 1)"; then
     bigwarn "npm pack failed: $spec (continued)"
     return 1
@@ -217,60 +216,62 @@ if [ -d "$WWW/lib/entryjs" ]; then
   log "COPY OK: $WWW/lib/entryjs -> $WWW/lib/entry-js"
 fi
 
+# ============================================================
+# ✅✅✅ ONLY ADD: make sure subfolder images/media are REAL FILES
+# (fix symlink directories like images/icon/* not being packaged)
+# ============================================================
+bigwarn "RESTORE: ensure images/media/uploads are copied WITH symlinks resolved (subfolder assets)"
+
+copy_follow_links () {
+  local src="$1" dst="$2"
+  [ -d "$src" ] || return 0
+  mkdir -p "$dst"
+
+  if command -v rsync >/dev/null 2>&1; then
+    # --copy-links : follow symlinks and copy the REAL files
+    # trailing slash 중요: 내용만 복사
+    rsync -a --copy-links "$src/" "$dst/"
+  else
+    # cp -aL : follow symlinks
+    cp -aL "$src/." "$dst/"
+  fi
+}
+
+# 1) lib/entryjs 내부의 images/media/uploads가 symlink일 수 있음 → 실파일로 펼쳐 복사
+copy_follow_links "$WWW/lib/entryjs/images"  "$WWW/lib/entryjs/images"
+copy_follow_links "$WWW/lib/entryjs/media"   "$WWW/lib/entryjs/media"
+copy_follow_links "$WWW/lib/entryjs/uploads" "$WWW/lib/entryjs/uploads"
+
+# 2) 절대경로(/images, /media, /uploads)로도 요청될 수 있으니 www 루트에도 보강
+mkdir -p "$WWW/images" "$WWW/media" "$WWW/uploads"
+copy_follow_links "$WWW/lib/entryjs/images"  "$WWW/images"
+copy_follow_links "$WWW/lib/entryjs/media"   "$WWW/media"
+copy_follow_links "$WWW/lib/entryjs/uploads" "$WWW/uploads"
+
+# 3) entry-js alias에도 동일 반영
+if [ -d "$WWW/lib/entry-js" ]; then
+  mkdir -p "$WWW/lib/entry-js/images" "$WWW/lib/entry-js/media" "$WWW/lib/entry-js/uploads"
+  copy_follow_links "$WWW/lib/entryjs/images"  "$WWW/lib/entry-js/images"
+  copy_follow_links "$WWW/lib/entryjs/media"   "$WWW/lib/entry-js/media"
+  copy_follow_links "$WWW/lib/entryjs/uploads" "$WWW/lib/entry-js/uploads"
+fi
+
+# 4) 검증 로그 (용량/파일수 확인)
+log "VERIFY images/icon/block_icon.png?"
+if [ -f "$WWW/images/icon/block_icon.png" ]; then
+  log "OK  $WWW/images/icon/block_icon.png"
+else
+  bigwarn "STILL MISSING: $WWW/images/icon/block_icon.png  (means source package doesn't contain it or path differs)"
+fi
+log "SIZE www/images = $(du -sh "$WWW/images" 2>/dev/null | awk '{print $1}')"
+log "COUNT www/images files = $(find "$WWW/images" -type f 2>/dev/null | wc -l | tr -d ' ')"
+
+# ============================================================
+
 if [ "$MISSING_COUNT" -gt 0 ]; then
   bigwarn "FETCH SUMMARY: $MISSING_COUNT file(s) may be missing (script continued)"
 else
   log "✅ FETCH SUMMARY: all downloads OK"
 fi
-# ---------- EXTRA: mirror ALL nested assets to absolute paths (/images, /media, /uploads) ----------
-# (다른 부분 수정 금지 요청에 따라, 여기만 "추가"합니다)
 
-bigwarn "ASSET MIRROR: entryjs/images/** -> www/images/** (recursive), media/uploads too"
-
-mkdir -p "$WWW/images" "$WWW/media" "$WWW/uploads" || true
-
-# 1) lib/entryjs/images/**  -> www/images/**
-if [ -d "$WWW/lib/entryjs/images" ]; then
-  cp -a "$WWW/lib/entryjs/images/." "$WWW/images/" || true
-  log "MIRROR OK: $WWW/lib/entryjs/images/** -> $WWW/images/**"
-fi
-
-# 2) lib/entryjs/media/** -> www/media/**
-if [ -d "$WWW/lib/entryjs/media" ]; then
-  cp -a "$WWW/lib/entryjs/media/." "$WWW/media/" || true
-  log "MIRROR OK: $WWW/lib/entryjs/media/** -> $WWW/media/**"
-fi
-
-# 3) lib/entryjs/uploads/** -> www/uploads/** (있으면)
-if [ -d "$WWW/lib/entryjs/uploads" ]; then
-  cp -a "$WWW/lib/entryjs/uploads/." "$WWW/uploads/" || true
-  log "MIRROR OK: $WWW/lib/entryjs/uploads/** -> $WWW/uploads/**"
-fi
-
-# 4) 혹시 images가 다른 위치에 있을 경우(패키지 구조 차이 대비)
-#    - src/images, res/images 등이 있으면 전부 합쳐 넣기
-for cand in \
-  "$WWW/lib/entryjs/src/images" \
-  "$WWW/lib/entryjs/res/images" \
-  "$WWW/lib/entryjs/resources/images" \
-  "$WWW/lib/entryjs/static/images" \
-  "$WWW/lib/entryjs/public/images"
-do
-  if [ -d "$cand" ]; then
-    cp -a "$cand/." "$WWW/images/" || true
-    log "MIRROR OK: $cand/** -> $WWW/images/**"
-  fi
-done
-
-# 5) 검증 로그(하위폴더 대표 파일)
-if [ -f "$WWW/images/icon/block_icon.png" ]; then
-  log "VERIFY OK: images/icon/block_icon.png exists"
-else
-  bigwarn "VERIFY FAIL: images/icon/block_icon.png still missing"
-  # 디버깅용: 실제 lib/entryjs/images 하위에 무엇이 있는지 출력
-  if [ -d "$WWW/lib/entryjs/images" ]; then
-    log "DEBUG: listing lib/entryjs/images/icon (if exists)"
-    ls -la "$WWW/lib/entryjs/images/icon" 2>/dev/null || true
-  fi
-fi
 exit 0
