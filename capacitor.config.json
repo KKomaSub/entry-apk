@@ -2,5 +2,9 @@
   "appId": "com.kkoma.entryoffline",
   "appName": "엔트리 오프라인",
   "webDir": "www",
-  "bundledWebRuntime": false
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "hostname": "localhost"
+  }
 }
