@@ -604,4 +604,95 @@ else
   bigwarn "MISS: /images/block_icon/ai_hand_icon.svg (check actual requested path)"
 fi
 # ============================================================
+# ============================================================
+# FIX: Capacitor/WebView often fails to serve paths that end with dot (e.g. /images/ai_on.)
+# Strategy:
+#  1) Duplicate "name." -> "name.png" (or svg/jpg/gif based on magic bytes)
+#  2) Patch JS/CSS references "/images/name." -> "/images/name.png"
+#  3) Same for /media if needed
+# ============================================================
+bigwarn "FIX: dot-ending asset filenames (name.) -> (name.png) + patch references"
+
+detect_ext_by_magic() {
+  local f="$1"
+  # PNG
+  if head -c 8 "$f" | od -An -t x1 | tr -d ' \n' | grep -qi '^89504e470d0a1a0a$'; then
+    echo "png"; return 0
+  fi
+  # JPG
+  if head -c 2 "$f" | od -An -t x1 | tr -d ' \n' | grep -qi '^ffd8$'; then
+    echo "jpg"; return 0
+  fi
+  # GIF
+  if head -c 3 "$f" | od -An -t x1 | tr -d ' \n' | grep -qi '^474946$'; then
+    echo "gif"; return 0
+  fi
+  # SVG (text)
+  if head -c 200 "$f" | tr -d '\r' | grep -qi '<svg'; then
+    echo "svg"; return 0
+  fi
+  # default: png (Entry assets are overwhelmingly png)
+  echo "png"
+}
+
+dup_dot_files() {
+  local baseDir="$1"
+  [ -d "$baseDir" ] || return 0
+
+  # find files whose name ends with '.' (no extension)
+  while IFS= read -r -d '' f; do
+    local ext out
+    ext="$(detect_ext_by_magic "$f")"
+    out="${f%.}.${ext}"     # "ai_on." -> "ai_on.png"
+    if [ ! -s "$out" ]; then
+      cp -f "$f" "$out" || true
+      log "DUP  $(realpath --relative-to="$WWW" "$f") -> $(realpath --relative-to="$WWW" "$out")"
+    fi
+  done < <(find "$baseDir" -type f -name '*.' -print0 2>/dev/null)
+}
+
+# 1) duplicate dot-ending in www/images and www/media and also inside lib copies (safe)
+dup_dot_files "$WWW/images"
+dup_dot_files "$WWW/media"
+dup_dot_files "$WWW/lib/entryjs/images"
+dup_dot_files "$WWW/lib/entryjs/media"
+dup_dot_files "$WWW/lib/entry-js/images"
+dup_dot_files "$WWW/lib/entry-js/media"
+
+# 2) patch references in JS/CSS/HTML: "/images/NAME." -> "/images/NAME.png"
+# (only for dot-ending tokens)
+patch_dot_refs() {
+  local f="$1"
+  [ -f "$f" ] || return 0
+  # replace /images/foo.  -> /images/foo.png
+  # replace /media/foo.   -> /media/foo.png
+  # (keep query string if any is already stripped in your scan; safe for bundles)
+  sed -i -E 's@(/images/[A-Za-z0-9_./-]+)\.@\1.png@g; s@(/media/[A-Za-z0-9_./-]+)\.@\1.png@g' "$f" || true
+}
+
+# patch the main bundles + css + index
+PATCH_TARGETS=(
+  "$WWW/index.html"
+  "$WWW/lib/entryjs/dist/entry.min.js"
+  "$WWW/lib/entryjs/dist/entry.css"
+  "$WWW/lib/entry-tool/dist/entry-tool.css"
+  "$WWW/lib/entry-paint/dist/static/js/entry-paint.js"
+  "$WWW/lib/entryjs/extern/util/static.js"
+)
+
+for f in "${PATCH_TARGETS[@]}"; do
+  log "PATCH dot-refs: $f"
+  patch_dot_refs "$f"
+done
+
+# 3) verify a representative dot-ending asset now has .png and is reachable in filesystem
+if [ -f "$WWW/images/ai_on.png" ]; then
+  log "OK  dot-fix created: images/ai_on.png"
+else
+  bigwarn "dot-fix did not create images/ai_on.png (check if images/ai_on. exists)"
+fi
+
+log "COUNT www/images files = $(find "$WWW/images" -type f 2>/dev/null | wc -l | tr -d ' ')"
+log "SIZE  www/images = $(du -sh "$WWW/images" 2>/dev/null | awk '{print $1}')"
+# ============================================================
 exit 0
