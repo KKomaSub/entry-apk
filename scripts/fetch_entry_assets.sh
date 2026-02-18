@@ -308,6 +308,71 @@ if [ -d "$WWW/lib/entryjs/media" ]; then
 else
   bigwarn "ALIAS MISS: $WWW/lib/entryjs/media (cannot create /media)"
 fi
+# ============================================================
+# FORCE-FETCH: entryjs images/** (including subfolders like icon/)
+# - playentry dist files don't include images directory
+# - so we copy images from entryjs github repo as a canonical source
+# ============================================================
+
+ensure_entryjs_images_full() {
+  local dst1="$WWW/lib/entryjs/images"
+  local dst2="$WWW/lib/entry-js/images"
+  local dst3="$WWW/images"
+  local need=0
+
+  # 하위폴더 대표 파일이 없으면 "누락"으로 판단
+  if [ ! -f "$dst1/icon/block_icon.png" ]; then
+    need=1
+  fi
+
+  if [ "$need" -eq 0 ]; then
+    log "ENTRYJS IMAGES OK: $dst1/icon/block_icon.png exists"
+    return 0
+  fi
+
+  bigwarn "ENTRYJS IMAGES MISSING: will clone entryjs repo and copy images/**"
+
+  local tmp="$WWW/.tmp_entryjs_repo"
+  rm -rf "$tmp"
+  mkdir -p "$tmp"
+
+  # GitHub에서 entryjs repo 가져오기 (images 폴더가 여기 있음)
+  # (actions runner에는 git 기본 설치되어 있음)
+  git clone --depth 1 https://github.com/entrylabs/entryjs.git "$tmp" >/dev/null 2>&1 || {
+    bigwarn "git clone failed: cannot fetch entryjs repo"
+    return 0  # 여기서는 실패해도 전체 스크립트는 계속 진행
+  }
+
+  if [ ! -d "$tmp/images" ]; then
+    bigwarn "entryjs repo has no images/ directory (unexpected) — continue"
+    rm -rf "$tmp"
+    return 0
+  fi
+
+  # 1) www/lib/entryjs/images/**
+  rm -rf "$dst1"
+  mkdir -p "$(dirname "$dst1")"
+  cp -a "$tmp/images" "$dst1"
+
+  # 2) www/lib/entry-js/images/** (alias)
+  rm -rf "$dst2"
+  mkdir -p "$(dirname "$dst2")"
+  cp -a "$tmp/images" "$dst2"
+
+  # 3) www/images/** (root alias for /images/...)
+  rm -rf "$dst3"
+  mkdir -p "$(dirname "$dst3")"
+  cp -a "$tmp/images" "$dst3"
+
+  log "ENTRYJS IMAGES RESTORED:"
+  log " - $dst1"
+  log " - $dst2"
+  log " - $dst3"
+
+  rm -rf "$tmp"
+}
+
+ensure_entryjs_images_full
 if [ "$missing" -eq 0 ]; then
   log "✅ FETCH SUMMARY: dist+extern+images+media OK"
 else
