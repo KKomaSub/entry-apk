@@ -1,382 +1,207 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
-
-# ============================================================
-# Fetch Entry assets (offline vendoring)
-# - Parallel downloads (default 5)
-# - Copy FULL entryjs extern/images/media from GitHub zip (raw)
-# - Ensure dist/entry.min.js + dist/entry.css exist (CDN fallback)
-# - NEVER write to absolute filesystem paths like /uploads (fix)
-# ============================================================
+set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WWW="${ROOT}/www"
 MAX_JOBS="${MAX_JOBS:-5}"
 
-mkdir -p "${WWW}"
+# entryjs repo (원하면 환경변수로 덮어쓰기 가능)
+ENTRYJS_REPO="${ENTRYJS_REPO:-https://github.com/entrylabs/entryjs.git}"
+ENTRYJS_BRANCH="${ENTRYJS_BRANCH:-master}"
 
-log() { echo "[$(date +'%H:%M:%S')] $*"; }
+mkdir -p "$WWW"
 
-bigwarn() {
-  echo
+log(){ echo "[$(date +'%H:%M:%S')] $*"; }
+bigwarn(){
   echo "████████████████████████████████████████████████████████████"
   echo "🚨🚨🚨 $*"
   echo "████████████████████████████████████████████████████████████"
-  echo
 }
 
-need_cmd() {
-  command -v "$1" >/dev/null 2>&1 || { bigwarn "Missing command: $1"; exit 1; }
-}
-need_cmd curl
-need_cmd unzip
-need_cmd rsync
-
-# --- job pool ------------------------------------------------
-pids=()
-job_spawn() { ("$@") & pids+=("$!"); job_throttle; }
-job_throttle() {
-  while [ "${#pids[@]}" -ge "${MAX_JOBS}" ]; do
-    for i in "${!pids[@]}"; do
-      if ! kill -0 "${pids[$i]}" 2>/dev/null; then
-        wait "${pids[$i]}" || true
-        unset 'pids[i]'
-        pids=("${pids[@]}")
-        break
-      fi
-    done
-    sleep 0.05
-  done
-}
-job_wait_all() {
-  local rc=0
-  for pid in "${pids[@]}"; do
-    wait "$pid" || rc=1
-  done
-  pids=()
-  return $rc
-}
-
-# --- path normalize ------------------------------------------
-# Convert "/uploads/font/a.woff" -> "uploads/font/a.woff"
-# Convert "./x" -> "x"
-relpath() {
+# ---- safe path: ALWAYS under $WWW ----
+# input: /images/a.png  -> $WWW/images/a.png
+# input: images/a.png   -> $WWW/images/a.png
+to_www_path(){
   local p="$1"
   p="${p#./}"
-  p="${p#/}"   # CRITICAL: never allow absolute paths like /uploads
-  echo "$p"
+  p="${p#/}"         # IMPORTANT: drop leading slash to avoid /images /uploads permission
+  echo "${WWW}/${p}"
 }
 
-ensure_parent() { mkdir -p "$(dirname "$1")"; }
+ensure_dir(){
+  local f="$1"
+  mkdir -p "$(dirname "$f")"
+}
 
-curl_get() {
-  local url="$1" dest="$2"
-  ensure_parent "$dest"
-  if curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 10 "$url" -o "${dest}.tmp"; then
-    mv -f "${dest}.tmp" "$dest"
-    log "OK   -> $dest"
+# ---- parallel downloader ----
+pids=()
+job_wait_all(){
+  local fail=0
+  for pid in "${pids[@]:-}"; do
+    if ! wait "$pid"; then fail=1; fi
+  done
+  pids=()
+  return $fail
+}
+job_spawn(){
+  while [ "${#pids[@]}" -ge "$MAX_JOBS" ]; do
+    if ! wait "${pids[0]}"; then true; fi
+    pids=("${pids[@]:1}")
+  done
+  ( "$@" ) &
+  pids+=("$!")
+}
+
+# ---- fetch helper ----
+# usage: fetch_one "https://..." "/lib/xxx/file.js"
+fetch_one(){
+  local url="$1"
+  local rel="$2"
+  local out
+  out="$(to_www_path "$rel")"
+  ensure_dir "$out"
+
+  log "GET  $url"
+  if curl -fsSL --retry 3 --retry-delay 1 "$url" -o "$out"; then
+    log "OK   -> $out"
     return 0
   else
-    rm -f "${dest}.tmp" || true
-    log "MISS $url"
+    bigwarn "MISS $url"
     return 1
   fi
 }
 
-fetch_with_candidates() {
-  local dest_rel="$1"; shift
-  local dest="${WWW}/$(relpath "$dest_rel")"
-  local ok=1
-  for url in "$@"; do
-    log "GET  $url"
-    if curl_get "$url" "$dest"; then ok=0; break; fi
-  done
-  if [ $ok -ne 0 ]; then
-    bigwarn "FAIL all candidates -> ${dest_rel}"
-    echo "Tried:"
-    for url in "$@"; do echo " - $url"; done
+# ---- copy dir recursively (real files, not symlinks) ----
+copy_tree(){
+  local src="$1"
+  local dst="$2"
+  if [ ! -d "$src" ]; then
     return 1
   fi
-  return 0
-}
-
-fetch_optional() {
-  local dest_rel="$1"; shift
-  if ! fetch_with_candidates "$dest_rel" "$@"; then
-    bigwarn "OPTIONAL missing: $(basename "$dest_rel") (continuing)"
-    return 0
+  mkdir -p "$dst"
+  # rsync가 있으면 가장 안전 (권한/타임스탬프/하위폴더)
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete "$src"/ "$dst"/
+  else
+    rm -rf "$dst"
+    mkdir -p "$dst"
+    cp -a "$src"/. "$dst"/
   fi
   return 0
 }
 
-extract_zip_url() {
-  local url="$1" outdir="$2"
-  rm -rf "$outdir"
-  mkdir -p "$outdir"
-  local zip="${outdir}.zip"
-  log "DOWNLOAD ZIP $url"
-  curl -fsSL --retry 3 --retry-delay 1 "$url" -o "$zip"
-  unzip -q "$zip" -d "$outdir"
-  rm -f "$zip"
-}
-
-# ============================================================
-# 0) Start
-# ============================================================
 log "=== Fetch Entry assets (offline vendoring) ==="
-log "ROOT=${ROOT}"
-log "WWW =${WWW}"
-log "MAX_JOBS=${MAX_JOBS}"
+log "ROOT=$ROOT"
+log "WWW =$WWW"
+log "MAX_JOBS=$MAX_JOBS"
+log "ENTRYJS_REPO=$ENTRYJS_REPO (branch=$ENTRYJS_BRANCH)"
 
-# ============================================================
-# 1) entryjs: extern/images/media 는 GitHub ZIP에서 '그대로 복사'
-#    dist는 repo에 없거나(빌드 산출물) 비어있을 수 있어 CDN로 보강
-# ============================================================
-ENTRYJS_REF="${ENTRYJS_REF:-develop}"
-ENTRYJS_ZIP="https://codeload.github.com/entrylabs/entryjs/zip/refs/heads/${ENTRYJS_REF}"
-TMP_ENTRYJS="${WWW}/.tmp_entryjs"
+# --- core libs (필요한 최소) ---
+job_spawn fetch_one "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.10/lodash.min.js" "/lib/lodash/dist/lodash.min.js"
+job_spawn fetch_one "https://cdnjs.cloudflare.com/ajax/libs/jquery/1.9.1/jquery.min.js" "/lib/jquery/jquery.min.js"
+job_spawn fetch_one "https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.10.4/jquery-ui.min.js" "/lib/jquery-ui/ui/minified/jquery-ui.min.js"
+job_spawn fetch_one "https://code.createjs.com/preloadjs-0.6.0.min.js" "/lib/PreloadJS/lib/preloadjs-0.6.0.min.js"
+job_spawn fetch_one "https://code.createjs.com/easeljs-0.8.0.min.js" "/lib/EaselJS/lib/easeljs-0.8.0.min.js"
+job_spawn fetch_one "https://code.createjs.com/soundjs-0.6.0.min.js" "/lib/SoundJS/lib/soundjs-0.6.0.min.js"
 
-bigwarn "FULL COPY entryjs extern/images/media from GitHub (${ENTRYJS_REF})"
-extract_zip_url "$ENTRYJS_ZIP" "$TMP_ENTRYJS"
-ENTRYJS_ROOT_DIR="$(find "$TMP_ENTRYJS" -maxdepth 1 -type d -name "entryjs-*" | head -n 1)"
-if [ -z "${ENTRYJS_ROOT_DIR}" ] || [ ! -d "${ENTRYJS_ROOT_DIR}" ]; then
-  bigwarn "entryjs zip layout unexpected"
+# flashaudioplugin optional (실패해도 계속)
+( job_spawn fetch_one "https://code.createjs.com/flashaudioplugin-0.6.0.min.js" "/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js" ) || true
+
+# locales optional
+( job_spawn fetch_one "https://playentry.org/js/ws/locales.js" "/js/ws/locales.js" ) || true
+
+# 기다림
+job_wait_all || true
+
+# ------------------------------------------------------------
+# ✅ ENTRYJS FULL COPY (핵심)
+# ------------------------------------------------------------
+TMP="${WWW}/.tmp_entryjs_clone"
+rm -rf "$TMP"
+mkdir -p "$TMP"
+
+log "=== CLONE entryjs repo for FULL static assets ==="
+if command -v git >/dev/null 2>&1; then
+  # shallow clone
+  git clone --depth 1 --branch "$ENTRYJS_BRANCH" "$ENTRYJS_REPO" "$TMP" >/dev/null 2>&1 || {
+    bigwarn "git clone failed: $ENTRYJS_REPO (branch=$ENTRYJS_BRANCH)"
+    bigwarn "TIP: set ENTRYJS_REPO env to correct repo URL"
+    exit 1
+  }
+else
+  bigwarn "git not found on runner. Cannot full-copy entryjs."
   exit 1
 fi
 
-mkdir -p "${WWW}/lib/entryjs"
-mkdir -p "${WWW}/lib/entryjs/dist"   # dist는 나중에 CDN로 반드시 채움
+# 복사 대상: www/lib/entryjs (그리고 과거 호환 alias www/lib/entry-js)
+DEST_ENTRYJS="${WWW}/lib/entryjs"
+DEST_ENTRYJS_ALIAS="${WWW}/lib/entry-js"
 
-# extern/images/media는 "그대로 복사"
-if [ -d "${ENTRYJS_ROOT_DIR}/extern" ]; then
-  rsync -a --delete "${ENTRYJS_ROOT_DIR}/extern/" "${WWW}/lib/entryjs/extern/" || true
-fi
-if [ -d "${ENTRYJS_ROOT_DIR}/images" ]; then
-  rsync -a --delete "${ENTRYJS_ROOT_DIR}/images/" "${WWW}/lib/entryjs/images/" || true
-fi
-if [ -d "${ENTRYJS_ROOT_DIR}/media" ]; then
-  rsync -a --delete "${ENTRYJS_ROOT_DIR}/media/" "${WWW}/lib/entryjs/media/" || true
-else
-  mkdir -p "${WWW}/lib/entryjs/media"
-fi
+mkdir -p "$DEST_ENTRYJS" "$DEST_ENTRYJS_ALIAS"
 
-# dist는 repo에 있을 수도 있으니 "있으면" 복사 (하지만 없으면 아래 CDN에서 채움)
-if [ -d "${ENTRYJS_ROOT_DIR}/dist" ]; then
-  rsync -a "${ENTRYJS_ROOT_DIR}/dist/" "${WWW}/lib/entryjs/dist/" || true
-fi
-
-rm -rf "$TMP_ENTRYJS" || true
-log "OK   entryjs extern/images/media copied (raw)"
-
-# ============================================================
-# 1-2) dist 보강: entry.min.js, entry.css는 CDN에서 "확실히" 받기
-# ============================================================
-bigwarn "ENSURE entryjs dist (entry.min.js + entry.css) from CDN if missing"
-
-# entry.min.js
-if [ ! -f "${WWW}/lib/entryjs/dist/entry.min.js" ]; then
-  fetch_with_candidates "lib/entryjs/dist/entry.min.js" \
-    "https://playentry.org/lib/entry-js/dist/entry.min.js" \
-    "https://entry-cdn.pstatic.net/lib/entry-js/dist/entry.min.js"
-fi
-
-# entry.css (경로/파일명은 entry.css)
-if [ ! -f "${WWW}/lib/entryjs/dist/entry.css" ]; then
-  fetch_with_candidates "lib/entryjs/dist/entry.css" \
-    "https://playentry.org/lib/entry-js/dist/entry.css" \
-    "https://entry-cdn.pstatic.net/lib/entry-js/dist/entry.css"
-fi
-
-# entryjs 별칭 폴더 유지 (entry-js <-> entryjs)
-mkdir -p "${WWW}/lib/entry-js"
-rsync -a --delete "${WWW}/lib/entryjs/" "${WWW}/lib/entry-js/" || true
-
-# ============================================================
-# 2) 3rd-party libs (병렬 5개)
-# ============================================================
-job_spawn fetch_with_candidates "lib/lodash/dist/lodash.min.js" \
-  "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.10/lodash.min.js"
-
-job_spawn fetch_with_candidates "lib/jquery/jquery.min.js" \
-  "https://cdnjs.cloudflare.com/ajax/libs/jquery/1.9.1/jquery.min.js"
-
-job_spawn fetch_with_candidates "lib/jquery-ui/ui/minified/jquery-ui.min.js" \
-  "https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.10.4/jquery-ui.min.js"
-
-job_spawn fetch_with_candidates "lib/PreloadJS/lib/preloadjs-0.6.0.min.js" \
-  "https://code.createjs.com/preloadjs-0.6.0.min.js"
-
-job_spawn fetch_with_candidates "lib/EaselJS/lib/easeljs-0.8.0.min.js" \
-  "https://code.createjs.com/easeljs-0.8.0.min.js"
-
-job_spawn fetch_with_candidates "lib/SoundJS/lib/soundjs-0.6.0.min.js" \
-  "https://code.createjs.com/soundjs-0.6.0.min.js"
-
-job_spawn fetch_optional "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js" \
-  "https://code.createjs.com/flashaudioplugin-0.6.0.min.js"
-
-job_spawn fetch_with_candidates "lib/velocity/velocity.min.js" \
-  "https://cdnjs.cloudflare.com/ajax/libs/velocity/1.2.3/velocity.min.js"
-
-job_spawn fetch_with_candidates "lib/codemirror/codemirror.css" \
-  "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css"
-
-job_spawn fetch_with_candidates "lib/codemirror/codemirror.js" \
-  "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"
-
-job_spawn fetch_optional "lib/codemirror/vim.js" \
-  "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/keymap/vim.min.js"
-
-job_spawn fetch_optional "js/ws/locales.js" \
-  "https://playentry.org/js/ws/locales.js"
-
-job_spawn fetch_with_candidates "lib/module/legacy-video/index.js" \
-  "https://entry-cdn.pstatic.net/module/legacy-video/index.js" \
-  "https://playentry.org/module/legacy-video/index.js"
-
-job_wait_all || true
-
-# ============================================================
-# 3) entry-tool / entry-paint (CDN)
-# ============================================================
-job_spawn fetch_with_candidates "lib/entry-tool/dist/entry-tool.js" \
-  "https://playentry.org/lib/entry-tool/dist/entry-tool.js" \
-  "https://entry-cdn.pstatic.net/lib/entry-tool/dist/entry-tool.js"
-
-job_spawn fetch_with_candidates "lib/entry-tool/dist/entry-tool.css" \
-  "https://playentry.org/lib/entry-tool/dist/entry-tool.css" \
-  "https://entry-cdn.pstatic.net/lib/entry-tool/dist/entry-tool.css"
-
-job_spawn fetch_with_candidates "lib/entry-paint/dist/static/js/entry-paint.js" \
-  "https://playentry.org/lib/entry-paint/dist/static/js/entry-paint.js" \
-  "https://entry-cdn.pstatic.net/lib/entry-paint/dist/static/js/entry-paint.js"
-
-job_wait_all || true
-
-# ============================================================
-# 4) /uploads/* (폰트 등) -> www/uploads/*
-# ============================================================
-fetch_optional "uploads/font/NanumSquare_acB.ttf" \
-  "https://playentry.org/uploads/font/NanumSquare_acB.ttf" \
-  "https://entry-cdn.pstatic.net/uploads/font/NanumSquare_acB.ttf"
-
-fetch_optional "uploads/font/NanumSquare_acB.woff" \
-  "https://playentry.org/uploads/font/NanumSquare_acB.woff" \
-  "https://entry-cdn.pstatic.net/uploads/font/NanumSquare_acB.woff"
-
-fetch_optional "uploads/font/NanumSquare_acR.ttf" \
-  "https://playentry.org/uploads/font/NanumSquare_acR.ttf" \
-  "https://entry-cdn.pstatic.net/uploads/font/NanumSquare_acR.ttf"
-
-fetch_optional "uploads/font/NanumSquare_acR.woff" \
-  "https://playentry.org/uploads/font/NanumSquare_acR.woff" \
-  "https://entry-cdn.pstatic.net/uploads/font/NanumSquare_acR.woff"
-
-# ============================================================
-# 5) sanity check
-# ============================================================
-missing=0
-if [ ! -f "${WWW}/lib/entryjs/dist/entry.min.js" ]; then
-  bigwarn "CRITICAL missing: www/lib/entryjs/dist/entry.min.js"
-  missing=1
-fi
-if [ ! -f "${WWW}/lib/entryjs/dist/entry.css" ]; then
-  bigwarn "CRITICAL missing: www/lib/entryjs/dist/entry.css"
-  missing=1
-fi
-if [ ! -d "${WWW}/lib/entryjs/images" ] || [ -z "$(ls -A "${WWW}/lib/entryjs/images" 2>/dev/null || true)" ]; then
-  bigwarn "CRITICAL missing/empty: www/lib/entryjs/images (icons will not show)"
-  missing=1
-fi
-# === Alias copy for absolute paths used inside EntryJS ===
-# Some assets are requested as /images/... or /media/... (root-absolute)
-# Ensure they exist at WWW root as well.
-mkdir -p "$WWW/images" "$WWW/media"
-
-if [ -d "$WWW/lib/entryjs/images" ]; then
-  rm -rf "$WWW/images"
-  cp -a "$WWW/lib/entryjs/images" "$WWW/images"
-  log "ALIAS OK: /images  -> $WWW/images"
-else
-  bigwarn "ALIAS MISS: $WWW/lib/entryjs/images (cannot create /images)"
-fi
-
-if [ -d "$WWW/lib/entryjs/media" ]; then
-  rm -rf "$WWW/media"
-  cp -a "$WWW/lib/entryjs/media" "$WWW/media"
-  log "ALIAS OK: /media   -> $WWW/media"
-else
-  bigwarn "ALIAS MISS: $WWW/lib/entryjs/media (cannot create /media)"
-fi
-# ============================================================
-# FORCE-FETCH: entryjs images/** (including subfolders like icon/)
-# - playentry dist files don't include images directory
-# - so we copy images from entryjs github repo as a canonical source
-# ============================================================
-
-ensure_entryjs_images_full() {
-  local dst1="$WWW/lib/entryjs/images"
-  local dst2="$WWW/lib/entry-js/images"
-  local dst3="$WWW/images"
-  local need=0
-
-  # 하위폴더 대표 파일이 없으면 "누락"으로 판단
-  if [ ! -f "$dst1/icon/block_icon.png" ]; then
-    need=1
+log "=== COPY entryjs folders (dist/images/media/extern/src 등 존재하는 것 전부) ==="
+# 가능한 폴더를 “있는 것만” 전부 복사
+for d in dist images media extern src res resources static public; do
+  if [ -d "${TMP}/${d}" ]; then
+    log "COPY ${d}/ -> ${DEST_ENTRYJS}/${d}/"
+    copy_tree "${TMP}/${d}" "${DEST_ENTRYJS}/${d}" || true
   fi
+done
 
-  if [ "$need" -eq 0 ]; then
-    log "ENTRYJS IMAGES OK: $dst1/icon/block_icon.png exists"
-    return 0
-  fi
-
-  bigwarn "ENTRYJS IMAGES MISSING: will clone entryjs repo and copy images/**"
-
-  local tmp="$WWW/.tmp_entryjs_repo"
-  rm -rf "$tmp"
-  mkdir -p "$tmp"
-
-  # GitHub에서 entryjs repo 가져오기 (images 폴더가 여기 있음)
-  # (actions runner에는 git 기본 설치되어 있음)
-  git clone --depth 1 https://github.com/entrylabs/entryjs.git "$tmp" >/dev/null 2>&1 || {
-    bigwarn "git clone failed: cannot fetch entryjs repo"
-    return 0  # 여기서는 실패해도 전체 스크립트는 계속 진행
-  }
-
-  if [ ! -d "$tmp/images" ]; then
-    bigwarn "entryjs repo has no images/ directory (unexpected) — continue"
-    rm -rf "$tmp"
-    return 0
-  fi
-
-  # 1) www/lib/entryjs/images/**
-  rm -rf "$dst1"
-  mkdir -p "$(dirname "$dst1")"
-  cp -a "$tmp/images" "$dst1"
-
-  # 2) www/lib/entry-js/images/** (alias)
-  rm -rf "$dst2"
-  mkdir -p "$(dirname "$dst2")"
-  cp -a "$tmp/images" "$dst2"
-
-  # 3) www/images/** (root alias for /images/...)
-  rm -rf "$dst3"
-  mkdir -p "$(dirname "$dst3")"
-  cp -a "$tmp/images" "$dst3"
-
-  log "ENTRYJS IMAGES RESTORED:"
-  log " - $dst1"
-  log " - $dst2"
-  log " - $dst3"
-
-  rm -rf "$tmp"
-}
-
-ensure_entryjs_images_full
-if [ "$missing" -eq 0 ]; then
-  log "✅ FETCH SUMMARY: dist+extern+images+media OK"
-else
-  bigwarn "FETCH SUMMARY: missing critical assets (see warnings above)"
+# package 내에서 entry.css/entry.min.js가 dist에 없고 다른 경로에 있을 수 있음:
+# dist가 비어있으면 playentry CDN을 fallback으로 가져오되, 기존 방식 유지 위해 최소만.
+if [ ! -f "${DEST_ENTRYJS}/dist/entry.min.js" ] && [ ! -f "${DEST_ENTRYJS}/dist/entry.js" ]; then
+  bigwarn "entryjs dist missing in repo copy. Fallback to playentry CDN for dist files."
+  # 필요한 최소 dist 파일만
+  fetch_one "https://playentry.org/lib/entry-js/dist/entry.min.js" "/lib/entryjs/dist/entry.min.js" || true
+  fetch_one "https://playentry.org/lib/entry-js/dist/entry.css" "/lib/entryjs/dist/entry.css" || true
 fi
 
-exit 0
+# alias copy: /lib/entry-js <-> /lib/entryjs (둘 다 동일하게 유지)
+log "=== ALIAS copy: lib/entryjs -> lib/entry-js ==="
+copy_tree "$DEST_ENTRYJS" "$DEST_ENTRYJS_ALIAS" || true
+
+# ------------------------------------------------------------
+# ✅ 절대경로(/images /media /uploads) 대비: www/images 등에 “실제 복사본” 만들기
+#   - EntryStatic.imagePath/mediaPath가 /images, /media 쓰는 경우
+#   - images/icon/... 같은 하위폴더가 APK에 포함되도록
+# ------------------------------------------------------------
+log "=== ABSOLUTE PATH mirrors: www/images,www/media,www/uploads ==="
+mkdir -p "$WWW/images" "$WWW/media" "$WWW/uploads"
+
+# entryjs/images -> www/images (실제 파일 복사)
+if [ -d "${DEST_ENTRYJS}/images" ]; then
+  copy_tree "${DEST_ENTRYJS}/images" "$WWW/images" || true
+fi
+if [ -d "${DEST_ENTRYJS}/media" ]; then
+  copy_tree "${DEST_ENTRYJS}/media" "$WWW/media" || true
+fi
+# uploads는 repo에 없을 수 있음. 있으면 복사.
+if [ -d "${TMP}/uploads" ]; then
+  copy_tree "${TMP}/uploads" "$WWW/uploads" || true
+fi
+
+# ------------------------------------------------------------
+# ✅ 검증 (하위폴더 이미지)
+# ------------------------------------------------------------
+log "=== VERIFY nested images ==="
+if [ -f "$WWW/images/btn.png" ]; then
+  log "OK  images/btn.png"
+else
+  bigwarn "MISSING images/btn.png (unexpected)"
+fi
+
+if [ -f "$WWW/images/icon/block_icon.png" ]; then
+  log "OK  images/icon/block_icon.png"
+else
+  bigwarn "MISSING images/icon/block_icon.png (this is your issue)"
+  log "CHECK: $WWW/images/icon exists?"
+  ls -la "$WWW/images/icon" || true
+fi
+
+log "=== SIZE CHECK ==="
+du -sh "$WWW" || true
+du -sh "$WWW/images" || true
+du -sh "$WWW/lib/entryjs" || true
+
+log "✅ FETCH DONE"
