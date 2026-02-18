@@ -4,7 +4,8 @@ set -Eeuo pipefail
 # ============================================================
 # Fetch Entry assets (offline vendoring)
 # - Parallel downloads (default 5)
-# - FULL copy of entryjs (dist/extern/images/media) from GitHub zip
+# - Copy FULL entryjs extern/images/media from GitHub zip (raw)
+# - Ensure dist/entry.min.js + dist/entry.css exist (CDN fallback)
 # - NEVER write to absolute filesystem paths like /uploads (fix)
 # ============================================================
 
@@ -24,13 +25,16 @@ bigwarn() {
   echo
 }
 
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || { bigwarn "Missing command: $1"; exit 1; }
+}
+need_cmd curl
+need_cmd unzip
+need_cmd rsync
+
 # --- job pool ------------------------------------------------
 pids=()
-job_spawn() {
-  ("$@") &
-  pids+=("$!")
-  job_throttle
-}
+job_spawn() { ("$@") & pids+=("$!"); job_throttle; }
 job_throttle() {
   while [ "${#pids[@]}" -ge "${MAX_JOBS}" ]; do
     for i in "${!pids[@]}"; do
@@ -55,23 +59,19 @@ job_wait_all() {
 
 # --- path normalize ------------------------------------------
 # Convert "/uploads/font/a.woff" -> "uploads/font/a.woff"
-# Convert "lib/entryjs/..." stays as-is
+# Convert "./x" -> "x"
 relpath() {
   local p="$1"
   p="${p#./}"
-  p="${p#/}"          # <-- CRITICAL: strip leading slash to avoid /uploads mkdir
+  p="${p#/}"   # CRITICAL: never allow absolute paths like /uploads
   echo "$p"
 }
 
-ensure_parent() {
-  local dest="$1"
-  mkdir -p "$(dirname "$dest")"
-}
+ensure_parent() { mkdir -p "$(dirname "$1")"; }
 
 curl_get() {
   local url="$1" dest="$2"
   ensure_parent "$dest"
-  # --fail to treat 404 as error; retry a bit
   if curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 10 "$url" -o "${dest}.tmp"; then
     mv -f "${dest}.tmp" "$dest"
     log "OK   -> $dest"
@@ -84,18 +84,15 @@ curl_get() {
 }
 
 fetch_with_candidates() {
-  # usage: fetch_with_candidates "dest_rel" "url1" "url2" ...
   local dest_rel="$1"; shift
   local dest="${WWW}/$(relpath "$dest_rel")"
-
   local ok=1
   for url in "$@"; do
     log "GET  $url"
     if curl_get "$url" "$dest"; then ok=0; break; fi
   done
-
   if [ $ok -ne 0 ]; then
-    bigwarn "FAIL all candidates -> $dest_rel"
+    bigwarn "FAIL all candidates -> ${dest_rel}"
     echo "Tried:"
     for url in "$@"; do echo " - $url"; done
     return 1
@@ -103,7 +100,6 @@ fetch_with_candidates() {
   return 0
 }
 
-# optional fetch: never fails pipeline
 fetch_optional() {
   local dest_rel="$1"; shift
   if ! fetch_with_candidates "$dest_rel" "$@"; then
@@ -112,14 +108,6 @@ fetch_optional() {
   fi
   return 0
 }
-
-# --- extract zip ----------------------------------------------
-need_cmd() {
-  command -v "$1" >/dev/null 2>&1 || { bigwarn "Missing command: $1"; exit 1; }
-}
-need_cmd curl
-need_cmd unzip
-need_cmd rsync
 
 extract_zip_url() {
   local url="$1" outdir="$2"
@@ -141,18 +129,15 @@ log "WWW =${WWW}"
 log "MAX_JOBS=${MAX_JOBS}"
 
 # ============================================================
-# 1) FULL COPY entryjs (dist/extern/images/media) - 그대로 복사
+# 1) entryjs: extern/images/media 는 GitHub ZIP에서 '그대로 복사'
+#    dist는 repo에 없거나(빌드 산출물) 비어있을 수 있어 CDN로 보강
 # ============================================================
-# 최신은 보통 develop에 있고, entry-offline은 master라는 맥락이지만
-# entryjs는 공식 repo 기본 브랜치가 develop임. (필요 시 ENTRYJS_REF로 변경)
 ENTRYJS_REF="${ENTRYJS_REF:-develop}"
 ENTRYJS_ZIP="https://codeload.github.com/entrylabs/entryjs/zip/refs/heads/${ENTRYJS_REF}"
 TMP_ENTRYJS="${WWW}/.tmp_entryjs"
 
-bigwarn "FULL COPY entryjs from GitHub (${ENTRYJS_REF}) -> www/lib/entryjs (dist/extern/images/media)"
+bigwarn "FULL COPY entryjs extern/images/media from GitHub (${ENTRYJS_REF})"
 extract_zip_url "$ENTRYJS_ZIP" "$TMP_ENTRYJS"
-
-# zip 최상단 폴더 찾기
 ENTRYJS_ROOT_DIR="$(find "$TMP_ENTRYJS" -maxdepth 1 -type d -name "entryjs-*" | head -n 1)"
 if [ -z "${ENTRYJS_ROOT_DIR}" ] || [ ! -d "${ENTRYJS_ROOT_DIR}" ]; then
   bigwarn "entryjs zip layout unexpected"
@@ -160,27 +145,55 @@ if [ -z "${ENTRYJS_ROOT_DIR}" ] || [ ! -d "${ENTRYJS_ROOT_DIR}" ]; then
 fi
 
 mkdir -p "${WWW}/lib/entryjs"
-rsync -a --delete "${ENTRYJS_ROOT_DIR}/dist/"  "${WWW}/lib/entryjs/dist/"  || true
-rsync -a --delete "${ENTRYJS_ROOT_DIR}/extern/" "${WWW}/lib/entryjs/extern/" || true
-rsync -a --delete "${ENTRYJS_ROOT_DIR}/images/" "${WWW}/lib/entryjs/images/" || true
-# media 폴더가 없을 수도 있으니 optional
+mkdir -p "${WWW}/lib/entryjs/dist"   # dist는 나중에 CDN로 반드시 채움
+
+# extern/images/media는 "그대로 복사"
+if [ -d "${ENTRYJS_ROOT_DIR}/extern" ]; then
+  rsync -a --delete "${ENTRYJS_ROOT_DIR}/extern/" "${WWW}/lib/entryjs/extern/" || true
+fi
+if [ -d "${ENTRYJS_ROOT_DIR}/images" ]; then
+  rsync -a --delete "${ENTRYJS_ROOT_DIR}/images/" "${WWW}/lib/entryjs/images/" || true
+fi
 if [ -d "${ENTRYJS_ROOT_DIR}/media" ]; then
   rsync -a --delete "${ENTRYJS_ROOT_DIR}/media/" "${WWW}/lib/entryjs/media/" || true
 else
   mkdir -p "${WWW}/lib/entryjs/media"
 fi
 
-# entryjs 경로 별칭도 유지(기존 스크립트들 호환)
+# dist는 repo에 있을 수도 있으니 "있으면" 복사 (하지만 없으면 아래 CDN에서 채움)
+if [ -d "${ENTRYJS_ROOT_DIR}/dist" ]; then
+  rsync -a "${ENTRYJS_ROOT_DIR}/dist/" "${WWW}/lib/entryjs/dist/" || true
+fi
+
+rm -rf "$TMP_ENTRYJS" || true
+log "OK   entryjs extern/images/media copied (raw)"
+
+# ============================================================
+# 1-2) dist 보강: entry.min.js, entry.css는 CDN에서 "확실히" 받기
+# ============================================================
+bigwarn "ENSURE entryjs dist (entry.min.js + entry.css) from CDN if missing"
+
+# entry.min.js
+if [ ! -f "${WWW}/lib/entryjs/dist/entry.min.js" ]; then
+  fetch_with_candidates "lib/entryjs/dist/entry.min.js" \
+    "https://playentry.org/lib/entry-js/dist/entry.min.js" \
+    "https://entry-cdn.pstatic.net/lib/entry-js/dist/entry.min.js"
+fi
+
+# entry.css (경로/파일명은 entry.css)
+if [ ! -f "${WWW}/lib/entryjs/dist/entry.css" ]; then
+  fetch_with_candidates "lib/entryjs/dist/entry.css" \
+    "https://playentry.org/lib/entry-js/dist/entry.css" \
+    "https://entry-cdn.pstatic.net/lib/entry-js/dist/entry.css"
+fi
+
+# entryjs 별칭 폴더 유지 (entry-js <-> entryjs)
 mkdir -p "${WWW}/lib/entry-js"
 rsync -a --delete "${WWW}/lib/entryjs/" "${WWW}/lib/entry-js/" || true
 
-rm -rf "$TMP_ENTRYJS" || true
-log "OK   entryjs FULL copy complete"
-
 # ============================================================
-# 2) 필수 3rd-party libs (entryjs README 기준)  (병렬 5개)
+# 2) 3rd-party libs (병렬 5개)
 # ============================================================
-# lodash/jq/ui/createjs/velocity/codemirror
 job_spawn fetch_with_candidates "lib/lodash/dist/lodash.min.js" \
   "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.10/lodash.min.js"
 
@@ -199,7 +212,6 @@ job_spawn fetch_with_candidates "lib/EaselJS/lib/easeljs-0.8.0.min.js" \
 job_spawn fetch_with_candidates "lib/SoundJS/lib/soundjs-0.6.0.min.js" \
   "https://code.createjs.com/soundjs-0.6.0.min.js"
 
-# flashaudioplugin은 종종 404 → optional
 job_spawn fetch_optional "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js" \
   "https://code.createjs.com/flashaudioplugin-0.6.0.min.js"
 
@@ -215,11 +227,9 @@ job_spawn fetch_with_candidates "lib/codemirror/codemirror.js" \
 job_spawn fetch_optional "lib/codemirror/vim.js" \
   "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/keymap/vim.min.js"
 
-# locales (optional but nice)
 job_spawn fetch_optional "js/ws/locales.js" \
   "https://playentry.org/js/ws/locales.js"
 
-# legacy-video module
 job_spawn fetch_with_candidates "lib/module/legacy-video/index.js" \
   "https://entry-cdn.pstatic.net/module/legacy-video/index.js" \
   "https://playentry.org/module/legacy-video/index.js"
@@ -227,8 +237,7 @@ job_spawn fetch_with_candidates "lib/module/legacy-video/index.js" \
 job_wait_all || true
 
 # ============================================================
-# 3) entry-tool / entry-paint (CDN에서 가져오되, 이미지/정적리소스는 폴더째 가져오기)
-#    - npm registry에서 @entrylabs/* 는 404가 날 수 있어 CDN 우선
+# 3) entry-tool / entry-paint (CDN)
 # ============================================================
 job_spawn fetch_with_candidates "lib/entry-tool/dist/entry-tool.js" \
   "https://playentry.org/lib/entry-tool/dist/entry-tool.js" \
@@ -245,10 +254,8 @@ job_spawn fetch_with_candidates "lib/entry-paint/dist/static/js/entry-paint.js" 
 job_wait_all || true
 
 # ============================================================
-# 4) /uploads/* (폰트 등) - "절대경로 mkdir" 금지: www/uploads 로 저장
-#    - entryjs initOptions fonts에서 /uploads/font/... 를 쓰는 케이스가 많아서
+# 4) /uploads/* (폰트 등) -> www/uploads/*
 # ============================================================
-# (필수는 아니지만, 있으면 깨지는 UI가 줄어듬. 전부 optional 처리)
 fetch_optional "uploads/font/NanumSquare_acB.ttf" \
   "https://playentry.org/uploads/font/NanumSquare_acB.ttf" \
   "https://entry-cdn.pstatic.net/uploads/font/NanumSquare_acB.ttf"
@@ -266,22 +273,26 @@ fetch_optional "uploads/font/NanumSquare_acR.woff" \
   "https://entry-cdn.pstatic.net/uploads/font/NanumSquare_acR.woff"
 
 # ============================================================
-# 5) 결과 체크 (이미지/미디어가 실제로 존재하는지)
+# 5) sanity check
 # ============================================================
 missing=0
-if [ ! -d "${WWW}/lib/entryjs/images" ] || [ -z "$(ls -A "${WWW}/lib/entryjs/images" 2>/dev/null || true)" ]; then
-  bigwarn "entryjs images directory is empty -> images will not show"
+if [ ! -f "${WWW}/lib/entryjs/dist/entry.min.js" ]; then
+  bigwarn "CRITICAL missing: www/lib/entryjs/dist/entry.min.js"
   missing=1
 fi
-if [ ! -d "${WWW}/lib/entryjs/dist" ] || [ ! -f "${WWW}/lib/entryjs/dist/entry.min.js" ]; then
-  bigwarn "entryjs dist missing -> entry cannot boot"
+if [ ! -f "${WWW}/lib/entryjs/dist/entry.css" ]; then
+  bigwarn "CRITICAL missing: www/lib/entryjs/dist/entry.css"
+  missing=1
+fi
+if [ ! -d "${WWW}/lib/entryjs/images" ] || [ -z "$(ls -A "${WWW}/lib/entryjs/images" 2>/dev/null || true)" ]; then
+  bigwarn "CRITICAL missing/empty: www/lib/entryjs/images (icons will not show)"
   missing=1
 fi
 
 if [ "$missing" -eq 0 ]; then
-  log "✅ FETCH SUMMARY: entryjs FULL + libs OK (images/media included)"
+  log "✅ FETCH SUMMARY: dist+extern+images+media OK"
 else
-  bigwarn "FETCH SUMMARY: some critical folders missing (check logs above)"
+  bigwarn "FETCH SUMMARY: missing critical assets (see warnings above)"
 fi
 
 exit 0
