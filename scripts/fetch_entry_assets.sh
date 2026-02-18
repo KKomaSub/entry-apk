@@ -736,4 +736,48 @@ ls -la "$WWW/images/ai_on." 2>/dev/null || true
 ls -la "$WWW/images/ai_on.png" 2>/dev/null || true
 # ============================================================
 # ============================================================
+# ============================================================
+# ✅ ONLY ADD: POST-PATCH absolute asset paths in css/js/html
+#  - fixes CSS background url(/images/...) not being rewritten by JS patch
+#  - rewrite only when clearly absolute-root paths are used
+# ============================================================
+bigwarn "POST-PATCH: rewrite /images|/media|/uploads => ./images|./media|./uploads in css/js/html"
+
+rewrite_paths_in_file() {
+  local f="$1"
+  [ -f "$f" ] || return 0
+
+  # GNU sed (ubuntu-latest) OK
+  # 1) url(/images/..) or url('/images/..') or url("/images/..")
+  sed -i -E \
+    -e 's#url\((["'"'"']?)\/(images|media|uploads)/#url(\1./\2/#g' \
+    -e 's#url\((["'"'"']?)\.\./(images|media|uploads)/#url(\1./\2/#g' \
+    -e 's#(["'"'"']?)\/(images|media|uploads)/#\1./\2/#g' \
+    "$f" || true
+}
+
+# patch targets (최소 핵심만)
+PATCH_FILES=(
+  "$WWW/index.html"
+  "$WWW/overrides.css"
+  "$WWW/lib/entryjs/dist/entry.css"
+  "$WWW/lib/entry-tool/dist/entry-tool.css"
+  "$WWW/lib/entryjs/dist/entry.min.js"
+  "$WWW/lib/entry-paint/dist/static/js/entry-paint.js"
+  "$WWW/lib/entryjs/extern/util/static.js"
+)
+
+for f in "${PATCH_FILES[@]}"; do
+  if [ -f "$f" ]; then
+    log "PATCH $f"
+    rewrite_paths_in_file "$f"
+  fi
+done
+
+# quick verify in css/js (원하면 유지)
+log "VERIFY PATCH: find remaining 'url(/images' patterns (should be 0)"
+grep -RIn "url\(/images" "$WWW" | head -n 20 || true
+log "VERIFY PATCH: find remaining '\"/images/' patterns (should be near 0)"
+grep -RIn "\"/images/" "$WWW" | head -n 20 || true
+# ============================================================
 exit 0
