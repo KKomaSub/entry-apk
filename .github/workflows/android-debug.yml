@@ -50,7 +50,15 @@ jobs:
         run: |
           cd android
           ./gradlew clean assembleDebug
-
+      - name: Inspect APK contents (must include images)
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          unzip -l "$APK" | grep -E "assets/public/images/" | head -n 20 || true
+          echo "== image count inside apk =="
+          unzip -l "$APK" | grep -E "assets/public/images/" | wc -l || true
+          echo "== sample nested file inside apk =="
+          unzip -l "$APK" | grep -F "assets/public/images/block_icon/ai_hand_icon.svg" || true
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
