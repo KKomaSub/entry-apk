@@ -482,4 +482,31 @@ if [ -f "$VERIFY_FILE" ]; then
 else
   bigwarn "STILL MISSING alias: images/icon/block_icon/ai_hand_icon.svg (check which path Entry requests in Network tab)"
 fi
+# ============================================================
+# ✅ FINAL FIX: ensure /images/icon/** exists (Entry legacy path)
+# ============================================================
+bigwarn "FINAL FIX: ensure www/images/icon/** alias exists (legacy requests)"
+
+mkdir -p "$WWW/images/icon" || true
+
+# 1) if we have block_icon, mirror into icon/block_icon
+if [ -d "$WWW/images/block_icon" ]; then
+  mkdir -p "$WWW/images/icon/block_icon"
+  cp -aL "$WWW/images/block_icon/." "$WWW/images/icon/block_icon/" 2>/dev/null || true
+  log "ALIAS OK: images/block_icon -> images/icon/block_icon"
+fi
+
+# 2) if we have icon folder inside lib/entryjs, mirror it too
+if [ -d "$WWW/lib/entryjs/images/icon" ]; then
+  mkdir -p "$WWW/images/icon"
+  cp -aL "$WWW/lib/entryjs/images/icon/." "$WWW/images/icon/" 2>/dev/null || true
+  log "ALIAS OK: lib/entryjs/images/icon -> images/icon"
+fi
+
+# 3) verify the exact file you asked
+VERIFY1="$WWW/images/block_icon/ai_hand_icon.svg"
+VERIFY2="$WWW/images/icon/block_icon/ai_hand_icon.svg"
+log "VERIFY: $VERIFY1 ?"; [ -f "$VERIFY1" ] && log "OK  $VERIFY1" || bigwarn "MISS $VERIFY1"
+log "VERIFY: $VERIFY2 ?"; [ -f "$VERIFY2" ] && log "OK  $VERIFY2" || bigwarn "MISS $VERIFY2"
+# ============================================================
 exit 0
