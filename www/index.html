@@ -174,7 +174,88 @@ async function testAsset(url){
         const r = await loadJS(src);
         bootLine((r.ok ? "OK   JS   " : "MISS(opt) ") + src, r.ok ? "ok" : "dim");
       }
+ function normalizeAssetUrl(u, BASE) {
+    if (!u || typeof u !== "string") return u;
 
+    // 이미 data/blob/http(s)/capacitor/file 인 건 건드리지 않음
+    if (/^(data:|blob:|https?:|capacitor:|file:)/i.test(u)) return u;
+
+    // "/images/xxx" "/media/xxx" "/uploads/xxx" 를 BASE+"images/xxx" 로 통일 (하위폴더 포함)
+    u = u.replace(/^\/(images|media|uploads)\//, (_, p) => BASE + p + "/");
+
+    // "./images/xxx" -> BASE+"images/xxx"
+    u = u.replace(/^\.\.\/(images|media|uploads)\//, (_, p) => BASE + p + "/");
+    u = u.replace(/^\.(\/)?(images|media|uploads)\//, (_, __, p) => BASE + p + "/");
+
+    return u;
+  }
+
+  function installHardAssetRewrite(BASE) {
+    // 1) <img src>, <audio src>, <video src>, <source src> 등
+    const _setAttr = Element.prototype.setAttribute;
+    Element.prototype.setAttribute = function (name, value) {
+      if ((name === "src" || name === "href") && typeof value === "string") {
+        value = normalizeAssetUrl(value, BASE);
+      }
+      return _setAttr.call(this, name, value);
+    };
+
+    // 2) JS에서 직접 img.src = "...", audio.src = "..." 하는 케이스
+    const imgDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
+    if (imgDesc && imgDesc.set) {
+      Object.defineProperty(HTMLImageElement.prototype, "src", {
+        get: imgDesc.get,
+        set(v) { return imgDesc.set.call(this, normalizeAssetUrl(v, BASE)); }
+      });
+    }
+
+    const mediaProto = HTMLMediaElement && HTMLMediaElement.prototype;
+    if (mediaProto) {
+      const mDesc = Object.getOwnPropertyDescriptor(mediaProto, "src");
+      if (mDesc && mDesc.set) {
+        Object.defineProperty(mediaProto, "src", {
+          get: mDesc.get,
+          set(v) { return mDesc.set.call(this, normalizeAssetUrl(v, BASE)); }
+        });
+      }
+    }
+
+    // 3) fetch/XHR도 같이 (이미 해두셨다면 중복이어도 안전)
+    const _fetch = window.fetch;
+    window.fetch = function (input, init) {
+      if (typeof input === "string") input = normalizeAssetUrl(input, BASE);
+      return _fetch.call(this, input, init);
+    };
+
+    const XHRopen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (m, url, ...rest) {
+      url = normalizeAssetUrl(url, BASE);
+      return XHRopen.call(this, m, url, ...rest);
+    };
+  }
+
+  async function boot() {
+    const candidates = ["./", "/", "/public/", "/www/"];
+    let BASE = "./";
+    for (const c of candidates) {
+      bootLine("PROBE BASE: " + c, "dim");
+      if (await probeBase(c)) { BASE = c; break; }
+    }
+    bootLine("BASE = " + BASE, "ok");
+
+    // ✅✅✅ 여기! (추가)
+    installHardAssetRewrite(BASE);
+    bootLine("HARD ASSET REWRITE installed (root+subfolders)", "ok");
+
+    // (선택) 즉시 실제 로드 테스트: 하위폴더 1개를 강제 로딩해 status 확인
+    try {
+      const t1 = await fetch("/images/_1x1.png", { cache: "no-store" });
+      bootLine("TEST /images/_1x1.png -> " + t1.status, t1.ok ? "ok" : "bad");
+      const t2 = await fetch("/images/block_icon/ai_hand_icon.svg", { cache: "no-store" });
+      bootLine("TEST /images/block_icon/ai_hand_icon.svg -> " + t2.status, t2.ok ? "ok" : "bad");
+    } catch (e) {
+      bootLine("TEST fetch error: " + e, "bad");
+    }
       // core libs
       const jsList = [
         BASE + "lib/lodash/dist/lodash.min.js",
