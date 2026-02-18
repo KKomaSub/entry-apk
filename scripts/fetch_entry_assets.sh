@@ -273,5 +273,112 @@ if [ "$MISSING_COUNT" -gt 0 ]; then
 else
   log "✅ FETCH SUMMARY: all downloads OK"
 fi
+# ============================================================
+# ✅ ONLY ADD: scan JS/CSS for /images/, /media/, /uploads/ and fetch all (subfolders 포함)
+# ============================================================
+bigwarn "RESTORE: scan bundles/css for /images|/media|/uploads paths and fetch missing (subfolder assets)"
 
+ASSET_SCAN_FILES=(
+  "$WWW/lib/entryjs/dist/entry.min.js"
+  "$WWW/lib/entryjs/dist/entry.css"
+  "$WWW/lib/entry-tool/dist/entry-tool.css"
+  "$WWW/lib/entry-paint/dist/static/js/entry-paint.js"
+  "$WWW/lib/entryjs/extern/util/static.js"
+)
+
+ASSET_HOSTS=(
+  "https://playentry.org"
+  "https://entry-cdn.pstatic.net"
+)
+
+# rel like /images/icon/a.png -> save to $WWW/images/icon/a.png
+asset_out_path() {
+  local rel="$1"
+  rel="${rel#./}"
+  rel="${rel#/}"
+  echo "$WWW/$rel"
+}
+
+fetch_candidates() {
+  local rel="$1" out="$2"
+  mkdir -p "$(dirname "$out")"
+  # 이미 있으면 스킵
+  if [ -s "$out" ]; then
+    return 0
+  fi
+
+  local h url
+  for h in "${ASSET_HOSTS[@]}"; do
+    url="${h}${rel}"
+    if curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 10 -o "$out" "$url"; then
+      log "OK   ASSET -> $rel"
+      return 0
+    fi
+  done
+
+  # 못 찾으면 실패(계속 진행)
+  bigwarn "ASSET MISS (continued): $rel"
+  return 1
+}
+
+# JS/CSS에서 /images/... /media/... /uploads/... 경로 추출
+extract_asset_paths() {
+  local f="$1"
+  [ -f "$f" ] || return 0
+
+  # 1) url(/images/...), url('/images/...'), "/images/..", '/images/..' 등 모두 잡기
+  # 2) 쿼리스트링 제거 (?v=xxx)
+  # 3) 공백/괄호/따옴표에서 끊기
+  grep -aoE '(/(images|media|uploads)/[^"'\''\)\s?#]+)' "$f" \
+    | sed -E 's/[?].*$//' \
+    | sort -u
+}
+
+# 병렬 다운로드에 기존 job_add/job_wait_all 사용 (수정 금지라 재사용)
+ASSET_TMP="$WWW/.asset_paths.txt"
+: > "$ASSET_TMP"
+
+for f in "${ASSET_SCAN_FILES[@]}"; do
+  if [ -f "$f" ]; then
+    log "SCAN $f"
+    extract_asset_paths "$f" >> "$ASSET_TMP" || true
+  else
+    log "SCAN SKIP (missing): $f"
+  fi
+done
+
+# 중복 제거
+sort -u "$ASSET_TMP" -o "$ASSET_TMP" || true
+
+ASSET_TOTAL="$(wc -l < "$ASSET_TMP" | tr -d ' ')"
+log "ASSET PATHS FOUND = $ASSET_TOTAL"
+
+# 다운로드 큐 추가 (MAX_JOBS 병렬)
+while IFS= read -r rel; do
+  [ -n "$rel" ] || continue
+  out="$(asset_out_path "$rel")"
+  # job_add(url,out,desc) 형태라서, 여기서는 "호스트별로 순회"가 필요 -> fetch_candidates를 job으로 돌림
+  (
+    fetch_candidates "$rel" "$out" || true
+  ) &
+  JOB_PIDS+=("$!")
+  JOB_DESC+=("asset $rel")
+  while [ "${#JOB_PIDS[@]}" -ge "$MAX_JOBS" ]; do
+    job_wait_one
+  done
+done < "$ASSET_TMP"
+
+job_wait_all
+
+# 최종 검증(예시 파일)
+log "VERIFY: $WWW/images/block_icon/ai_hand_icon.svg ?"
+if [ -f "$WWW/images/block_icon/ai_hand_icon.svg" ]; then
+  log "OK  images/block_icon/ai_hand_icon.svg exists"
+else
+  bigwarn "STILL MISSING: images/block_icon/ai_hand_icon.svg  (path may differ in this Entry build; check network request path)"
+fi
+
+log "SIZE www/images = $(du -sh "$WWW/images" 2>/dev/null | awk '{print $1}')"
+log "COUNT www/images files = $(find "$WWW/images" -type f 2>/dev/null | wc -l | tr -d ' ')"
+# ============================================================
 exit 0
