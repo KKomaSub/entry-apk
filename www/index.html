@@ -19,6 +19,14 @@
   </style>
 
   <script>
+async function testAsset(url){
+  try{
+    const r = await fetch(url, { cache:"no-store" });
+    bootLine(`TEST ${url} -> ${r.status} ct=${r.headers.get("content-type")}`, r.ok ? "ok":"bad");
+  }catch(e){
+    bootLine(`TEST ${url} -> ERR ${e}`, "bad");
+  }
+}
     function bootLine(t, cls="") {
       const el = document.getElementById("boot");
       if (!el) return;
@@ -187,6 +195,8 @@
       }
 
       // globals check
+      await testAsset("/images/_1x1.png");
+      await testAsset("/images/block_icon/ai_hand_icon.svg");
       bootLine("_.memoize = " + (window._ ? typeof _.memoize : "N/A"), window._ ? "ok" : "bad");
       bootLine("$.fn.jquery = " + (window.$ && $.fn ? $.fn.jquery : "N/A"), (window.$ && $.fn) ? "ok" : "bad");
       bootLine("createjs = " + (typeof window.createjs), window.createjs ? "ok" : "bad");
