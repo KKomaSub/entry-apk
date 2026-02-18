@@ -381,4 +381,53 @@ fi
 log "SIZE www/images = $(du -sh "$WWW/images" 2>/dev/null | awk '{print $1}')"
 log "COUNT www/images files = $(find "$WWW/images" -type f 2>/dev/null | wc -l | tr -d ' ')"
 # ============================================================
+# ============================================================
+# ✅ ONLY ADD: Mirror EntryJS images/** (including subfolders) into www/images/**
+#   - fixes: /images/icon/... 404
+#   - do NOT symlink (APK/webview can break); copy with -L to resolve links
+# ============================================================
+bigwarn "MIRROR: lib/entryjs/images/** -> www/images/** (subfolder assets fix)"
+
+# ensure targets exist
+mkdir -p "$WWW/images" "$WWW/media" "$WWW/uploads" || true
+
+# source candidates (some builds may use entry-js)
+IMG_SRC1="$WWW/lib/entryjs/images"
+IMG_SRC2="$WWW/lib/entry-js/images"
+
+mirror_tree () {
+  local src="$1" dst="$2"
+  if [ -d "$src" ]; then
+    # copy contents, keep subdirs, overwrite/merge, dereference symlinks
+    cp -aL "$src/." "$dst/" 2>/dev/null || true
+    log "MIRROR OK: $src -> $dst"
+  else
+    log "MIRROR SKIP (missing): $src"
+  fi
+}
+
+mirror_tree "$IMG_SRC1" "$WWW/images"
+mirror_tree "$IMG_SRC2" "$WWW/images"
+
+# also mirror media if present (sometimes audio/cursor assets live there)
+MEDIA_SRC1="$WWW/lib/entryjs/media"
+MEDIA_SRC2="$WWW/lib/entry-js/media"
+mirror_tree "$MEDIA_SRC1" "$WWW/media"
+mirror_tree "$MEDIA_SRC2" "$WWW/media"
+
+# verify a known subfolder case (your example)
+if [ -f "$WWW/images/icon/block_icon.png" ]; then
+  log "OK  FIXED: images/icon/block_icon.png exists"
+else
+  bigwarn "STILL MISSING: images/icon/block_icon.png (means source package truly doesn't contain that path; request path may differ)"
+  # quick hint: list icon folder if exists
+  if [ -d "$WWW/images/icon" ]; then
+    log "LIST www/images/icon (top 50):"
+    ls -1 "$WWW/images/icon" | head -n 50 || true
+  fi
+fi
+
+log "SIZE www/images = $(du -sh "$WWW/images" 2>/dev/null | awk '{print $1}')"
+log "COUNT www/images files = $(find "$WWW/images" -type f 2>/dev/null | wc -l | tr -d ' ')"
+# ============================================================
 exit 0
