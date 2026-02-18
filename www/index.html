@@ -186,13 +186,12 @@ async function testAsset(url){
       }
 
       // EntryStatic path local (이미 적용되어 있다면 그대로 유지)
-      if (window.EntryStatic) {
-        try {
-          if (typeof EntryStatic.imagePath === "string") EntryStatic.imagePath = BASE + "lib/entryjs/images/";
-          if (typeof EntryStatic.mediaPath === "string") EntryStatic.mediaPath = BASE + "lib/entryjs/media/";
-          bootLine("PATCH EntryStatic.imagePath/mediaPath -> local", "dim");
-        } catch (_) {}
-      }
+      // EntryStatic 패치 구간에서 (다른 것 수정 금지)
+if (window.EntryStatic) {
+  EntryStatic.imagePath = "/images/";
+  EntryStatic.mediaPath = "/media/";
+  EntryStatic.uploadPath = "/uploads/";
+}
 
       // globals check
       await testAsset("/images/_1x1.png");
