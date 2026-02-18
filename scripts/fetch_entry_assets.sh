@@ -288,7 +288,26 @@ if [ ! -d "${WWW}/lib/entryjs/images" ] || [ -z "$(ls -A "${WWW}/lib/entryjs/ima
   bigwarn "CRITICAL missing/empty: www/lib/entryjs/images (icons will not show)"
   missing=1
 fi
+# === Alias copy for absolute paths used inside EntryJS ===
+# Some assets are requested as /images/... or /media/... (root-absolute)
+# Ensure they exist at WWW root as well.
+mkdir -p "$WWW/images" "$WWW/media"
 
+if [ -d "$WWW/lib/entryjs/images" ]; then
+  rm -rf "$WWW/images"
+  cp -a "$WWW/lib/entryjs/images" "$WWW/images"
+  log "ALIAS OK: /images  -> $WWW/images"
+else
+  bigwarn "ALIAS MISS: $WWW/lib/entryjs/images (cannot create /images)"
+fi
+
+if [ -d "$WWW/lib/entryjs/media" ]; then
+  rm -rf "$WWW/media"
+  cp -a "$WWW/lib/entryjs/media" "$WWW/media"
+  log "ALIAS OK: /media   -> $WWW/media"
+else
+  bigwarn "ALIAS MISS: $WWW/lib/entryjs/media (cannot create /media)"
+fi
 if [ "$missing" -eq 0 ]; then
   log "✅ FETCH SUMMARY: dist+extern+images+media OK"
 else
