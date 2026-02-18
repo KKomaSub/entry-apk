@@ -219,7 +219,18 @@ if (window.EntryStatic) {
       must(window.Entry && typeof window.Entry.init === "function", "Entry.init");
 
       bootLine("Starting Entry.init …", "dim");
-
+// LOG: 어떤 이미지 경로로 실제 요청하는지 잡기
+(function(){
+  const _set = Object.getOwnPropertyDescriptor(Image.prototype, 'src').set;
+  Object.defineProperty(Image.prototype, 'src', {
+    set(v){
+      if (typeof v === "string" && v.includes("/images/")) {
+        bootLine("IMG REQ: " + v, "dim");
+      }
+      return _set.call(this, v);
+    }
+  });
+})();
       Entry.init(document.getElementById("entryContainer"), {
         type: "workspace",
         libDir: BASE + "lib",
