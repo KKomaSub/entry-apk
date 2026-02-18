@@ -509,4 +509,99 @@ VERIFY2="$WWW/images/icon/block_icon/ai_hand_icon.svg"
 log "VERIFY: $VERIFY1 ?"; [ -f "$VERIFY1" ] && log "OK  $VERIFY1" || bigwarn "MISS $VERIFY1"
 log "VERIFY: $VERIFY2 ?"; [ -f "$VERIFY2" ] && log "OK  $VERIFY2" || bigwarn "MISS $VERIFY2"
 # ============================================================
+# ============================================================
+# ✅ FINAL: copy ALL images into www/images and rewrite refs
+# ============================================================
+bigwarn "FINAL: COPY ALL images -> www/images (recursive, resolve symlinks)"
+
+mkdir -p "$WWW/images" "$WWW/media" "$WWW/uploads" || true
+
+copy_tree_resolve_links () {
+  local src="$1" dst="$2"
+  [ -d "$src" ] || return 0
+  mkdir -p "$dst"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --copy-links "$src/" "$dst/"
+  else
+    cp -aL "$src/." "$dst/"
+  fi
+  log "COPY OK: $src -> $dst"
+}
+
+# 1) Entry 패키지 내부의 images/media/uploads를 루트(www)로 풀카피
+copy_tree_resolve_links "$WWW/lib/entryjs/images"  "$WWW/images"
+copy_tree_resolve_links "$WWW/lib/entryjs/media"   "$WWW/media"
+copy_tree_resolve_links "$WWW/lib/entryjs/uploads" "$WWW/uploads"
+
+# 2) alias 라이브러리(entry-js)에도 있으면 추가로 병합
+copy_tree_resolve_links "$WWW/lib/entry-js/images"  "$WWW/images"
+copy_tree_resolve_links "$WWW/lib/entry-js/media"   "$WWW/media"
+copy_tree_resolve_links "$WWW/lib/entry-js/uploads" "$WWW/uploads"
+
+# 3) (선택) 혹시 다른 위치에 images가 더 있으면 전부 루트로 병합
+# - 예: www/lib/**/images
+while IFS= read -r d; do
+  copy_tree_resolve_links "$d" "$WWW/images"
+done < <(find "$WWW/lib" -type d -name images 2>/dev/null | sort -u)
+
+log "SIZE www/images = $(du -sh "$WWW/images" 2>/dev/null | awk '{print $1}')"
+log "COUNT www/images files = $(find "$WWW/images" -type f 2>/dev/null | wc -l | tr -d ' ')"
+
+# ------------------------------------------------------------
+# ✅ FINAL: rewrite ALL refs in html/js/css to /images/..., /media/..., /uploads/...
+#   - 목표: 어떤 파일 위치에서 로드하든 항상 동일한 절대 경로로 접근
+# ------------------------------------------------------------
+bigwarn "FINAL: REWRITE asset refs in *.html/*.js/*.css to /images|/media|/uploads"
+
+rewrite_file () {
+  local f="$1"
+  # perl로 안전하게 다중 패턴 치환 (JS/CSS/HTML 공통)
+  perl -0777 -i -pe '
+    # ---- images ----
+    s#https?://(?:playentry\.org|entry-cdn\.pstatic\.net)(/images/)#\1#g;
+    s#\./lib/entryjs/images/#/images/#g;
+    s#/lib/entryjs/images/#/images/#g;
+    s#\./lib/entry-js/images/#/images/#g;
+    s#/lib/entry-js/images/#/images/#g;
+    s#\./images/#/images/#g;
+
+    # ---- media ----
+    s#https?://(?:playentry\.org|entry-cdn\.pstatic\.net)(/media/)#\1#g;
+    s#\./lib/entryjs/media/#/media/#g;
+    s#/lib/entryjs/media/#/media/#g;
+    s#\./lib/entry-js/media/#/media/#g;
+    s#/lib/entry-js/media/#/media/#g;
+    s#\./media/#/media/#g;
+
+    # ---- uploads ----
+    s#https?://(?:playentry\.org|entry-cdn\.pstatic\.net)(/uploads/)#\1#g;
+    s#\./lib/entryjs/uploads/#/uploads/#g;
+    s#/lib/entryjs/uploads/#/uploads/#g;
+    s#\./lib/entry-js/uploads/#/uploads/#g;
+    s#/lib/entry-js/uploads/#/uploads/#g;
+    s#\./uploads/#/uploads/#g;
+
+    # ---- CSS url("...") 형태의 상대경로를 강제로 /images 로 통일하고 싶은 경우 (보수적으로만)
+    # url(images/xxx) -> url(/images/xxx)
+    s#url\(\s*([\"\047]?)images/#url(\1/images/#g;
+    s#url\(\s*([\"\047]?)/?lib/entryjs/images/#url(\1/images/#g;
+    s#url\(\s*([\"\047]?)/?lib/entry-js/images/#url(\1/images/#g;
+
+  ' "$f" || true
+}
+
+# 대상: www 아래 모든 html/js/css
+while IFS= read -r f; do
+  rewrite_file "$f"
+done < <(find "$WWW" -type f \( -name '*.html' -o -name '*.js' -o -name '*.css' \) 2>/dev/null)
+
+log "REWRITE DONE: unified refs -> /images /media /uploads"
+
+# (검증 예시)
+if [ -f "$WWW/images/block_icon/ai_hand_icon.svg" ]; then
+  log "OK  /images/block_icon/ai_hand_icon.svg exists"
+else
+  bigwarn "MISS: /images/block_icon/ai_hand_icon.svg (check actual requested path)"
+fi
+# ============================================================
 exit 0
