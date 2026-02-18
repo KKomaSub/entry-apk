@@ -38,7 +38,9 @@
       try {
         const r = await fetch(url, { method: "GET", cache: "no-store" });
         return r.ok;
-      } catch (_) { return false; }
+      } catch (_) {
+        return false;
+      }
     }
 
     function loadJS(src) {
@@ -67,81 +69,6 @@
       bootLine("OK   " + msg, "ok");
     }
 
-    function joinBase(BASE, p) {
-      // "/uploads/.." 같은 루트경로 요청을 앱 로컬로 돌려서 이미지/폰트가 살아나게 함
-      if (!p) return p;
-      if (p.startsWith("./")) return BASE + p.slice(2);
-      if (p.startsWith("/")) return BASE + p.slice(1);
-      return BASE + p; // 상대경로도 BASE 기준으로 맞춤
-    }
-
-    function patchFetchAndXHR(BASE) {
-      // Entry 내부/외부에서 "/lib/..." "/uploads/..." 로 박혀서 요청하는 케이스를 로컬로 리라이트
-      const rewrite = (url) => {
-        try {
-          const u = String(url);
-          if (u.startsWith("http://") || u.startsWith("https://")) return u;
-          if (u.startsWith("/")) return joinBase(BASE, u);
-          return u;
-        } catch (_) { return url; }
-      };
-
-      if (!window.__ENTRY_URL_PATCHED__) {
-        window.__ENTRY_URL_PATCHED__ = true;
-
-        // fetch patch
-        const _fetch = window.fetch;
-        if (typeof _fetch === "function") {
-          window.fetch = function(input, init) {
-            const patched = (typeof input === "string") ? rewrite(input) : input;
-            return _fetch.call(this, patched, init);
-          };
-          bootLine("PATCH URL rewrite: /... -> BASE/...", "ok");
-        }
-
-        // XHR patch
-        const _open = XMLHttpRequest.prototype.open;
-        XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-          return _open.call(this, method, rewrite(url), ...rest);
-        };
-      }
-    }
-
-    function patchLodashCompat() {
-      // entryjs가 _.contains, _.findWhere 같은 구 underscore 스타일을 기대하는 경우가 있어 보정
-      if (window._) {
-        if (typeof _.contains !== "function" && typeof _.includes === "function") {
-          _.contains = _.includes;
-        }
-        if (typeof _.findWhere !== "function" && typeof _.find === "function") {
-          _.findWhere = function(arr, props){
-            return _.find(arr, function(o){
-              for (const k in props) { if (o[k] !== props[k]) return false; }
-              return true;
-            });
-          };
-        }
-        bootLine("PATCH lodash: _.contains/_.findWhere ok", "ok");
-      }
-    }
-
-    function patchEntryStaticPaths(BASE) {
-      if (!window.EntryStatic) return;
-
-      // ★ 이미지/미디어/업로드 경로를 "로컬 절대경로"로 강제
-      // (Capacitor/localhost 환경에서 가장 안정적)
-      const img = joinBase(BASE, "/lib/entryjs/images/");
-      const media = joinBase(BASE, "/lib/entryjs/media/");
-      const uploads = joinBase(BASE, "/uploads/");
-
-      window.EntryStatic.imagePath = img;
-      window.EntryStatic.mediaPath = media;
-      // 일부 코드/폰트가 /uploads/... 를 참조하므로 루트 업로드도 로컬로 살아있게
-      window.EntryStatic.uploadsPath = uploads;
-
-      bootLine("PATCH EntryStatic.imagePath/mediaPath -> local", "ok");
-    }
-
     async function boot() {
       const candidates = ["./", "/", "/public/", "/www/"];
       let BASE = "./";
@@ -150,8 +77,6 @@
         if (await probeBase(c)) { BASE = c; break; }
       }
       bootLine("BASE = " + BASE, "ok");
-
-      patchFetchAndXHR(BASE);
 
       // CSS
       const cssList = [
@@ -165,57 +90,103 @@
         bootLine((r.ok ? "OK   CSS  " : "MISS CSS ") + href, r.ok ? "ok" : "bad");
       }
 
-      // locales optional
+      // locales (optional)
       {
         const src = BASE + "js/ws/locales.js";
         const r = await loadJS(src);
         bootLine((r.ok ? "OK   JS   " : "MISS(opt) ") + src, r.ok ? "ok" : "dim");
       }
 
-      // JS (순서 중요)
+      // core libs
       const jsList = [
         BASE + "lib/lodash/dist/lodash.min.js",
         BASE + "lib/jquery/jquery.min.js",
         BASE + "lib/jquery-ui/ui/minified/jquery-ui.min.js",
+
         BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
         BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
         BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
+
         BASE + "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js", // optional
+
         BASE + "lib/velocity/velocity.min.js",
+
         BASE + "lib/codemirror/codemirror.js",
         BASE + "lib/codemirror/vim.js", // optional
+
         BASE + "lib/entry-tool/dist/entry-tool.js",
+
         BASE + "lib/entryjs/extern/lang/ko.js",
         BASE + "lib/entryjs/extern/util/static.js",
         BASE + "lib/entryjs/extern/util/handle.js",
         BASE + "lib/entryjs/extern/util/bignumber.min.js",
         BASE + "lib/module/legacy-video/index.js",
-        // sound-editor는 React 의존이 커서 현재는 “실행에 필수”가 아니면 스킵 가능
+
+        // sound editor (optional) — 실패해도 계속
         BASE + "lib/external/sound/sound-editor.js",
+
+        // entry core
         BASE + "lib/entryjs/dist/entry.min.js",
+
+        // paint
         BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
       ];
 
       for (const src of jsList) {
         const optional =
           src.includes("flashaudioplugin") ||
-          src.includes("vim.js") ||
-          src.includes("sound-editor.js");
+          src.includes("/vim.js") ||
+          src.includes("/ws/locales.js") ||
+          src.includes("/external/sound/sound-editor.js");
 
         const r = await loadJS(src);
+
+        // ✅ 핵심 수정: sound-editor.js가 실패하면 EntrySoundEditor 스텁 주입 (entry.min.js 크래시 방지)
+        if (!r.ok && src.includes("/external/sound/sound-editor.js")) {
+          bootLine("MISS(opt) " + src, "dim");
+          bootLine("PATCH EntrySoundEditor: stub applied (sound editor disabled)", "dim");
+          if (!window.EntrySoundEditor) {
+            window.EntrySoundEditor = {
+              // entry.min.js가 기대하는 함수들(있어야 크래시 안 남)
+              renderSoundEditor: function () { /* no-op */ },
+              registExportFunction: function () { /* no-op */ },
+              registImportFunction: function () { /* no-op */ },
+              init: function () { /* no-op */ },
+            };
+          }
+          continue;
+        }
+
         bootLine(
           (r.ok ? "OK   JS   " : (optional ? "MISS(opt) " : "MISS     ")) + src,
           r.ok ? "ok" : (optional ? "dim" : "bad")
         );
-
-        // lodash 로딩 직후 호환 패치
-        if (src.includes("/lodash.min.js") && r.ok) patchLodashCompat();
-
-        // EntryStatic 로딩 직후 이미지/미디어 경로 로컬로 강제
-        if (src.includes("/extern/util/static.js") && r.ok) patchEntryStaticPaths(BASE);
       }
 
-      // 글로벌 체크
+      // lodash 패치 (구버전 호환)
+      if (window._) {
+        if (typeof _.contains !== "function" && typeof _.includes === "function") _.contains = _.includes;
+        if (typeof _.findWhere !== "function") {
+          _.findWhere = function (arr, attrs) {
+            return _.find(arr, function (o) {
+              for (var k in attrs) if (o[k] !== attrs[k]) return false;
+              return true;
+            });
+          };
+        }
+        bootLine("PATCH lodash: _.contains/_.findWhere ok", "dim");
+      }
+
+      // EntryStatic path local (이미 적용되어 있다면 그대로 유지)
+      if (window.EntryStatic) {
+        try {
+          if (typeof EntryStatic.imagePath === "string") EntryStatic.imagePath = BASE + "lib/entryjs/images/";
+          if (typeof EntryStatic.mediaPath === "string") EntryStatic.mediaPath = BASE + "lib/entryjs/media/";
+          bootLine("PATCH EntryStatic.imagePath/mediaPath -> local", "dim");
+        } catch (_) {}
+      }
+
+      // globals check
       bootLine("_.memoize = " + (window._ ? typeof _.memoize : "N/A"), window._ ? "ok" : "bad");
       bootLine("$.fn.jquery = " + (window.$ && $.fn ? $.fn.jquery : "N/A"), (window.$ && $.fn) ? "ok" : "bad");
       bootLine("createjs = " + (typeof window.createjs), window.createjs ? "ok" : "bad");
@@ -223,6 +194,7 @@
       bootLine("EntryTool = " + (typeof window.EntryTool), window.EntryTool ? "ok" : "bad");
       bootLine("EntryVideoLegacy = " + (typeof window.EntryVideoLegacy), window.EntryVideoLegacy ? "ok" : "bad");
       bootLine("EntryStatic = " + (typeof window.EntryStatic), window.EntryStatic ? "ok" : "bad");
+      bootLine("EntrySoundEditor = " + (typeof window.EntrySoundEditor), window.EntrySoundEditor ? "ok" : "dim");
       bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
         (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
 
@@ -233,6 +205,8 @@
       must(window.EntryTool, "EntryTool");
       must(window.EntryVideoLegacy, "EntryVideoLegacy");
       must(window.EntryStatic, "EntryStatic");
+      // ✅ sound editor는 이제 optional (스텁이면 통과)
+      must(window.EntrySoundEditor, "EntrySoundEditor (optional stub OK)");
       must(window.Entry && typeof window.Entry.init === "function", "Entry.init");
 
       bootLine("Starting Entry.init …", "dim");
