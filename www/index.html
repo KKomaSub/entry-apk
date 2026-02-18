@@ -17,7 +17,77 @@
     .dim{opacity:.85}
     .ok{color:#66ff66}
   </style>
+<script>
+(function(){
+  // BASE 자동탐지 결과를 쓰고 싶지만, 탐지 전에 필요한 경우가 많아서
+  // "현재 index.html 기준 상대경로"를 1차 기준으로 잡습니다.
+  // => ./images/..., ./media/... 는 Capacitor에서 가장 안정적으로 동작합니다.
+  const REL_BASE = './';
 
+  const rewrite = (u) => {
+    try {
+      if (!u) return u;
+      // 이미 상대경로면 그대로
+      if (u.startsWith('./') || u.startsWith('../')) return u;
+      // data/blob는 그대로
+      if (u.startsWith('data:') || u.startsWith('blob:')) return u;
+
+      // 절대경로 자산만 상대경로로 강제 변환
+      if (u.startsWith('/images/')) return REL_BASE + u.slice(1);
+      if (u.startsWith('/media/'))  return REL_BASE + u.slice(1);
+      if (u.startsWith('/uploads/'))return REL_BASE + u.slice(1);
+
+      return u;
+    } catch(e){ return u; }
+  };
+
+  // fetch 리라이트
+  const _fetch = window.fetch;
+  window.fetch = function(input, init){
+    try{
+      if (typeof input === 'string') input = rewrite(input);
+      else if (input && input.url) input = new Request(rewrite(input.url), input);
+    }catch(e){}
+    return _fetch.call(this, input, init);
+  };
+
+  // XHR 리라이트
+  const _open = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url){
+    return _open.call(this, method, rewrite(url), ...[].slice.call(arguments, 2));
+  };
+
+  // DOM src/href(이미지/오디오/비디오/링크) 리라이트: MutationObserver로 강제
+  const fixEl = (el) => {
+    if (!el || !el.getAttribute) return;
+    if (el.hasAttribute('src')) {
+      const s = el.getAttribute('src');
+      const r = rewrite(s);
+      if (r !== s) el.setAttribute('src', r);
+    }
+    if (el.hasAttribute('href')) {
+      const h = el.getAttribute('href');
+      const r = rewrite(h);
+      if (r !== h) el.setAttribute('href', r);
+    }
+  };
+
+  new MutationObserver((muts)=>{
+    for (const m of muts){
+      if (m.type === 'attributes') fixEl(m.target);
+      if (m.addedNodes){
+        m.addedNodes.forEach(n=>{
+          if (n.nodeType===1){
+            fixEl(n);
+            n.querySelectorAll && n.querySelectorAll('[src],[href]').forEach(fixEl);
+          }
+        });
+      }
+    }
+  }).observe(document.documentElement, {subtree:true, childList:true, attributes:true, attributeFilter:['src','href']});
+
+})();
+</script>
   <script>
 async function testAsset(url){
   try{
