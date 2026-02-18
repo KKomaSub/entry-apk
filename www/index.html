@@ -231,11 +231,11 @@ if (window.EntryStatic) {
     }
   });
 })();
-      Entry.init(document.getElementById("entryContainer"), {
-        type: "workspace",
-        libDir: BASE + "lib",
-        textCodingEnable: true
-      });
+Entry.init(document.getElementById("entryContainer"), {
+  type: "workspace",
+  libDir: "/lib",
+  textCodingEnable: true
+});
 
       Entry.loadProject();
       document.getElementById("boot").remove();
