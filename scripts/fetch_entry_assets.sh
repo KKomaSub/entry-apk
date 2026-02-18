@@ -1,226 +1,199 @@
-#!/usr/bin/env bash
-set -Eeuo pipefail
+# =============================================================================
+# EXTRA: fetch ALL referenced assets (images/fonts/audio) from CSS + JS strings
+# - keep everything else unchanged
+# - do NOT fail the workflow on missing assets
+# =============================================================================
+bigwarn "EXTRA ASSET PASS: scan CSS url(...) + JS string paths (images/audio/fonts)"
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WWW="$ROOT/www"
-MAX_JOBS="${MAX_JOBS:-5}"
+ASSET_FAILS=0
 
-mkdir -p "$WWW"
-
-log(){ echo "[$(date +'%H:%M:%S')] $*"; }
-bigwarn(){
-  echo
-  echo "████████████████████████████████████████████████████████████"
-  echo "🚨🚨🚨 $*"
-  echo "████████████████████████████████████████████████████████████"
-  echo
+# URL -> local path helper
+# - supports:
+#   /lib/...  -> $WWW/lib/...
+#   ./lib/... -> $WWW/lib/...
+#   lib/...   -> $WWW/lib/...
+#   /js/...   -> $WWW/js/...
+#   /overrides.css -> $WWW/overrides.css
+to_local_path() {
+  local p="$1"
+  p="${p%%\?*}"        # strip query
+  p="${p%%\#*}"        # strip hash
+  p="${p#./}"          # remove leading ./
+  p="${p#/}"           # remove leading /
+  echo "$WWW/$p"
 }
+
+# download with multiple candidate origins
+# (1) playentry (2) entry-cdn
+fetch_asset_candidates() {
+  local rel="$1" out="$2"
+
+  # normalize rel
+  rel="${rel%%\?*}"; rel="${rel%%\#*}"
+  rel="${rel#./}"
+  rel="/${rel#/}"
+
+  mkdir -p "$(dirname "$out")"
+
+  # candidates (add more if you already have other CDN roots)
+  local c1="https://playentry.org${rel}"
+  local c2="https://entry-cdn.pstatic.net${rel}"
+
+  # try each; never hard-fail
+  if curl -fsSL --retry 2 --retry-delay 1 --connect-timeout 10 -o "$out" "$c1" 2>/dev/null; then
+    log "ASSET OK  $rel  (playentry)"
+    return 0
+  fi
+  if curl -fsSL --retry 2 --retry-delay 1 --connect-timeout 10 -o "$out" "$c2" 2>/dev/null; then
+    log "ASSET OK  $rel  (entry-cdn)"
+    return 0
+  fi
+
+  ASSET_FAILS=$((ASSET_FAILS+1))
+  echo
+  echo "████████████████████████████████████████████████████████████"
+  echo "🚨🚨🚨 ASSET MISS $rel"
+  echo "████████████████████████████████████████████████████████████"
+  echo
+  return 1
+}
+
+# enqueue asset fetch (uses existing parallel job_add if available)
+asset_add() {
+  local rel="$1"
+  local out
+  out="$(to_local_path "$rel")"
+
+  # skip data: / blob: / http(s):
+  if [[ "$rel" =~ ^data: ]] || [[ "$rel" =~ ^blob: ]] || [[ "$rel" =~ ^https?:// ]]; then
+    return 0
+  fi
+
+  # ignore obvious non-assets
+  if [[ "$rel" =~ ^javascript: ]] || [[ "$rel" == "" ]]; then
+    return 0
+  fi
+
+  # Only fetch typical asset extensions (images/fonts/audio/video)
+  if [[ ! "$rel" =~ \.(png|jpg|jpeg|gif|webp|svg|ico|cur|woff2|woff|ttf|otf|eot|mp3|wav|ogg|m4a|mp4|webm)$ ]]; then
+    return 0
+  fi
+
+  # if already exists, skip
+  if [ -f "$out" ] && [ -s "$out" ]; then
+    return 0
+  fi
+
+  # Use your existing job_add queue (parallel)
+  job_add "ASSET::${rel}" "$out" "asset $rel"
+}
+
+# Adapt job_add to support ASSET:: pseudo urls without breaking your old behavior
+# If your script already has job_add, DO NOT replace it.
+# Instead, we override the internal fetch behavior only for ASSET:: entries.
+_original_fetch_one_declared=0
+if declare -F _fetch_one >/dev/null 2>&1; then
+  _original_fetch_one_declared=1
+  eval "$(declare -f _fetch_one | sed 's/^_fetch_one/_fetch_one__orig/')"
+fi
 
 _fetch_one() {
   local url="$1" out="$2"
+
+  if [[ "$url" == ASSET::* ]]; then
+    local rel="${url#ASSET::}"
+    fetch_asset_candidates "$rel" "$out" && return 0 || return 1
+  fi
+
+  # fallback to original if existed
+  if [ "$_original_fetch_one_declared" -eq 1 ]; then
+    _fetch_one__orig "$url" "$out"
+    return $?
+  fi
+
+  # minimal default (should not happen in your script)
   mkdir -p "$(dirname "$out")"
-  if curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 10 -o "$out" "$url"; then
-    log "OK   -> $out"
-    return 0
-  else
-    log "MISS $url"
-    return 1
-  fi
+  curl -fsSL --retry 2 --retry-delay 1 --connect-timeout 10 -o "$out" "$url"
 }
 
-declare -a JOB_PIDS=()
-declare -a JOB_DESC=()
-MISSING_COUNT=0
+# ----------------------------
+# 1) Scan CSS url(...)
+# ----------------------------
+scan_css_urls() {
+  local css="$1"
+  [ -f "$css" ] || return 0
 
-job_wait_one(){
-  local pid="${JOB_PIDS[0]}"
-  local desc="${JOB_DESC[0]}"
-  if wait "$pid"; then :; else
-    bigwarn "FAILED: $desc (continued)"
-    MISSING_COUNT=$((MISSING_COUNT+1))
-  fi
-  JOB_PIDS=("${JOB_PIDS[@]:1}")
-  JOB_DESC=("${JOB_DESC[@]:1}")
+  # extract url(...) tokens
+  # supports: url(x) url('x') url("x")
+  grep -Eo 'url\(([^)]+)\)' "$css" \
+    | sed -E 's/^url\((.*)\)$/\1/' \
+    | sed -E 's/^["'\'']|["'\'']$//g' \
+    | while read -r u; do
+        # ignore data uris
+        [[ "$u" =~ ^data: ]] && continue
+        # normalize relative -> rooted at css directory
+        # if starts with / -> use as-is
+        # else make relative to css location
+        if [[ "$u" =~ ^/ ]]; then
+          asset_add "$u"
+        else
+          local base_dir rel
+          base_dir="$(dirname "${css#$WWW/}")"
+          rel="/${base_dir}/${u}"
+          # cleanup /./ and // etc
+          rel="$(echo "$rel" | sed -E 's#/\.?/#/#g; s#//#/#g')"
+          asset_add "$rel"
+        fi
+      done
 }
 
-job_add(){
-  local url="$1" out="$2" desc="${3:-$out}"
-  (
-    _fetch_one "$url" "$out"
-  ) &
-  JOB_PIDS+=("$!")
-  JOB_DESC+=("$desc")
-  while [ "${#JOB_PIDS[@]}" -ge "$MAX_JOBS" ]; do
-    job_wait_one
-  done
+# Scan key CSS files you already download
+scan_css_urls "$WWW/lib/entryjs/dist/entry.css"
+scan_css_urls "$WWW/lib/entry-tool/dist/entry-tool.css"
+scan_css_urls "$WWW/lib/codemirror/codemirror.css"
+scan_css_urls "$WWW/overrides.css"  # if exists
+
+# ----------------------------
+# 2) Scan JS for common asset string paths
+#    (best-effort; won't be perfect, but catches most)
+# ----------------------------
+scan_js_strings() {
+  local js="$1"
+  [ -f "$js" ] || return 0
+
+  # pull strings that look like /lib/...something.(png|svg|mp3|woff2...)
+  # keep it simple and robust
+  grep -Eo '(/[^"'"'"' ]+\.(png|jpg|jpeg|gif|webp|svg|ico|cur|woff2|woff|ttf|otf|eot|mp3|wav|ogg|m4a|mp4|webm))' "$js" \
+    | sort -u \
+    | while read -r p; do
+        asset_add "$p"
+      done
 }
 
-job_wait_all(){
-  while [ "${#JOB_PIDS[@]}" -gt 0 ]; do
-    job_wait_one
-  done
-}
+scan_js_strings "$WWW/lib/entryjs/dist/entry.min.js"
+scan_js_strings "$WWW/lib/entry-tool/dist/entry-tool.js"
+scan_js_strings "$WWW/lib/entry-paint/dist/static/js/entry-paint.js"
+scan_js_strings "$WWW/lib/module/legacy-video/index.js"
+scan_js_strings "$WWW/lib/external/sound/sound-editor.js"  # if present
 
-log "=== Fetch Entry assets (offline vendoring) ==="
-log "ROOT=$ROOT"
-log "WWW =$WWW"
-log "MAX_JOBS=$MAX_JOBS"
-
+# ----------------------------
+# 3) Also ensure “known” asset folders exist (best effort)
+#    If you already copied FULL @entrylabs/entry -> lib/entryjs,
+#    this will already be there. If not, at least create dirs.
+# ----------------------------
 mkdir -p \
-  "$WWW/lib/react" \
-  "$WWW/lib" \
-  "$WWW/js/ws" \
-  "$WWW/lib/jquery" \
-  "$WWW/lib/jquery-ui/ui/minified" \
-  "$WWW/lib/lodash/dist" \
-  "$WWW/lib/underscore" \
-  "$WWW/lib/codemirror" \
-  "$WWW/lib/PreloadJS/lib" \
-  "$WWW/lib/EaselJS/lib" \
-  "$WWW/lib/SoundJS/lib" \
-  "$WWW/lib/velocity" \
-  "$WWW/lib/entry-tool/dist" \
-  "$WWW/lib/entry-paint/dist/static/js" \
-  "$WWW/lib/module/legacy-video" \
-  "$WWW/lib/external/sound" \
-  "$WWW/lib/entryjs" \
-  "$WWW/lib/entryjs/dist" \
-  "$WWW/lib/entryjs/extern/lang" \
-  "$WWW/lib/entryjs/extern/util"
+  "$WWW/lib/entryjs/images" \
+  "$WWW/lib/entryjs/media" \
+  "$WWW/lib/entryjs/sounds" \
+  "$WWW/lib/entryjs/fonts" \
+  "$WWW/lib/entryjs/extern" \
+  "$WWW/lib/entryjs/dist"
 
-# ---------- React (필수) ----------
-# entry.min.js 내부에서 SoundEditor(React 기반)를 기대하는 버전이 많아서 반드시 포함
-job_add "https://unpkg.com/react@16.14.0/umd/react.production.min.js" \
-        "$WWW/lib/react/react.production.min.js" \
-        "react 16.14.0"
+# Kick parallel downloads
+job_wait_all || true
 
-job_add "https://unpkg.com/react-dom@16.14.0/umd/react-dom.production.min.js" \
-        "$WWW/lib/react/react-dom.production.min.js" \
-        "react-dom 16.14.0"
-
-# ---------- CDN libs ----------
-job_add "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.10/lodash.min.js" \
-        "$WWW/lib/lodash/dist/lodash.min.js" "lodash 4.17.10"
-
-job_add "https://cdnjs.cloudflare.com/ajax/libs/jquery/1.9.1/jquery.min.js" \
-        "$WWW/lib/jquery/jquery.min.js" "jquery 1.9.1"
-
-job_add "https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.10.4/jquery-ui.min.js" \
-        "$WWW/lib/jquery-ui/ui/minified/jquery-ui.min.js" "jquery-ui 1.10.4"
-
-job_add "https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js" \
-        "$WWW/lib/underscore/underscore-min.js" "underscore 1.8.3 (optional)"
-
-job_add "https://cdnjs.cloudflare.com/ajax/libs/velocity/1.2.3/velocity.min.js" \
-        "$WWW/lib/velocity/velocity.min.js" "velocity 1.2.3"
-
-job_add "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" \
-        "$WWW/lib/codemirror/codemirror.css" "codemirror css"
-
-job_add "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js" \
-        "$WWW/lib/codemirror/codemirror.js" "codemirror js"
-
-job_add "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/keymap/vim.min.js" \
-        "$WWW/lib/codemirror/vim.js" "codemirror vim (optional)"
-
-job_add "https://code.createjs.com/preloadjs-0.6.0.min.js" \
-        "$WWW/lib/PreloadJS/lib/preloadjs-0.6.0.min.js" "preloadjs 0.6.0"
-
-job_add "https://code.createjs.com/easeljs-0.8.0.min.js" \
-        "$WWW/lib/EaselJS/lib/easeljs-0.8.0.min.js" "easeljs 0.8.0"
-
-job_add "https://code.createjs.com/soundjs-0.6.0.min.js" \
-        "$WWW/lib/SoundJS/lib/soundjs-0.6.0.min.js" "soundjs 0.6.0"
-
-job_add "https://code.createjs.com/flashaudioplugin-0.6.0.min.js" \
-        "$WWW/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js" "flashaudioplugin 0.6.0 (optional)"
-
-job_add "https://playentry.org/js/ws/locales.js" \
-        "$WWW/js/ws/locales.js" "ws/locales.js (optional)"
-
-# ---------- playentry static ----------
-job_add "https://playentry.org/lib/entry-js/dist/entry.min.js" \
-        "$WWW/lib/entryjs/dist/entry.min.js" "entry.min.js"
-job_add "https://playentry.org/lib/entry-js/dist/entry.css" \
-        "$WWW/lib/entryjs/dist/entry.css" "entry.css"
-job_add "https://playentry.org/lib/entry-js/extern/lang/ko.js" \
-        "$WWW/lib/entryjs/extern/lang/ko.js" "ko.js"
-job_add "https://playentry.org/lib/entry-js/extern/util/static.js" \
-        "$WWW/lib/entryjs/extern/util/static.js" "static.js"
-job_add "https://playentry.org/lib/entry-js/extern/util/handle.js" \
-        "$WWW/lib/entryjs/extern/util/handle.js" "handle.js"
-job_add "https://playentry.org/lib/entry-js/extern/util/bignumber.min.js" \
-        "$WWW/lib/entryjs/extern/util/bignumber.min.js" "bignumber.min.js"
-
-job_add "https://playentry.org/lib/entry-tool/dist/entry-tool.js" \
-        "$WWW/lib/entry-tool/dist/entry-tool.js" "entry-tool.js"
-job_add "https://playentry.org/lib/entry-tool/dist/entry-tool.css" \
-        "$WWW/lib/entry-tool/dist/entry-tool.css" "entry-tool.css"
-
-job_add "https://playentry.org/lib/entry-paint/dist/static/js/entry-paint.js" \
-        "$WWW/lib/entry-paint/dist/static/js/entry-paint.js" "entry-paint.js"
-
-job_add "https://entry-cdn.pstatic.net/module/legacy-video/index.js" \
-        "$WWW/lib/module/legacy-video/index.js" "legacy-video/index.js"
-
-# ---------- sound-editor.js (가능하면 로컬화) ----------
-# 경로/버전이 바뀔 수 있어서 "시도만" 하고 실패해도 계속
-job_add "https://playentry.org/lib/external/sound/sound-editor.js" \
-        "$WWW/lib/external/sound/sound-editor.js" "sound-editor.js (try 1, optional)"
-job_add "https://entry-cdn.pstatic.net/lib/external/sound/sound-editor.js" \
-        "$WWW/lib/external/sound/sound-editor.js" "sound-editor.js (try 2, optional)"
-
-job_wait_all
-
-# ---------- FULL extract: @entrylabs/entry ----------
-bigwarn "NPM FALLBACK: extracting @entrylabs/entry (images/media/extern full copy)"
-
-export NPM_CONFIG_USERCONFIG=/dev/null
-export NPM_CONFIG_FUND=false
-export NPM_CONFIG_AUDIT=false
-export NPM_CONFIG_PROGRESS=false
-export NPM_CONFIG_LOGLEVEL=error
-unset NODE_AUTH_TOKEN || true
-unset NPM_TOKEN || true
-
-npm_extract_pkg () {
-  local spec="$1" outdir="$2"
-  mkdir -p "$outdir"
-  log "NPM EXTRACT: $spec -> $outdir"
-  if ! tarball="$(npm pack "$spec" 2>/dev/null | tail -n 1)"; then
-    bigwarn "npm pack failed: $spec (continued)"
-    return 1
-  fi
-  tar -xf "$tarball" -C "$outdir"
-  rm -f "$tarball"
-  return 0
-}
-
-ENTRY_PKG="$WWW/.npm_entry_pkg"
-if npm_extract_pkg "@entrylabs/entry" "$ENTRY_PKG"; then
-  if [ -d "$ENTRY_PKG/package" ]; then
-    rm -rf "$WWW/lib/entryjs"
-    mkdir -p "$WWW/lib/entryjs"
-    cp -a "$ENTRY_PKG/package/." "$WWW/lib/entryjs/"
-    log "COPY OK: FULL @entrylabs/entry -> $WWW/lib/entryjs"
-  else
-    bigwarn "unexpected npm pack layout for @entrylabs/entry (continued)"
-  fi
+if [ "$ASSET_FAILS" -gt 0 ]; then
+  bigwarn "EXTRA ASSET PASS done: $ASSET_FAILS miss(es) (script continued)"
 else
-  bigwarn "cannot extract @entrylabs/entry (images may break) (continued)"
+  log "✅ EXTRA ASSET PASS done: all extra assets fetched (best-effort)"
 fi
-
-# alias: entry-js도 맞춰줌
-if [ -d "$WWW/lib/entryjs" ]; then
-  rm -rf "$WWW/lib/entry-js"
-  cp -a "$WWW/lib/entryjs" "$WWW/lib/entry-js"
-  log "COPY OK: $WWW/lib/entryjs -> $WWW/lib/entry-js"
-fi
-
-if [ "$MISSING_COUNT" -gt 0 ]; then
-  bigwarn "FETCH SUMMARY: $MISSING_COUNT file(s) may be missing (script continued)"
-else
-  log "✅ FETCH SUMMARY: all downloads OK"
-fi
-
-exit 0
