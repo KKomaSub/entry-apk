@@ -9,6 +9,11 @@ jobs:
   build-debug-apk:
     runs-on: ubuntu-latest
 
+    # ✅ ADD: artifact 삭제를 위해 필요
+    permissions:
+      contents: read
+      actions: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,6 +55,7 @@ jobs:
         run: |
           cd android
           ./gradlew clean assembleDebug
+
       - name: Inspect APK contents (must include images)
         run: |
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
@@ -59,11 +65,46 @@ jobs:
           unzip -l "$APK" | grep -E "assets/public/images/" | wc -l || true
           echo "== sample nested file inside apk =="
           unzip -l "$APK" | grep -F "assets/public/images/block_icon/ai_hand_icon.svg" || true
+
+      # ✅ ADD HERE: 업로드 전에 오래된 artifact 자동 삭제 (app-debug만 대상으로)
+      - name: Cleanup old artifacts (keep latest 2)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const ARTIFACT_NAME = "app-debug";
+            const KEEP = 2; // 최신 2개만 남기기
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            // repo의 artifacts 목록
+            const artifacts = await github.paginate(
+              github.rest.actions.listArtifactsForRepo,
+              { owner, repo, per_page: 100 }
+            );
+
+            // 이름 필터 + 오래된 순 정렬
+            const targets = artifacts
+              .filter(a => a.name === ARTIFACT_NAME && !a.expired)
+              .sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
+
+            core.info(`Found ${targets.length} artifact(s) named "${ARTIFACT_NAME}"`);
+
+            // 최신 KEEP개 제외하고 삭제
+            const toDelete = targets.slice(0, Math.max(0, targets.length - KEEP));
+            for (const a of toDelete) {
+              core.info(`Deleting artifact id=${a.id} created_at=${a.created_at}`);
+              await github.rest.actions.deleteArtifact({ owner, repo, artifact_id: a.id });
+            }
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          # ✅ ADD: 보관기간도 짧게 (저장공간 폭주 방지)
+          retention-days: 3
+
       - name: Build www from entry-offline renderer
         run: |
           set -e
@@ -73,11 +114,8 @@ jobs:
           mkdir -p www
 
           # 2) entry-offline renderer 소스 복사 (소스 위치에 맞게)
-          # 예: entry-offline/src/renderer 가 존재한다고 했으니 그대로 복사
           cp -a entry-offline/src/renderer/. www/
 
-          # 3) (중요) 앱이 기대하는 번들/리소스 경로가 www 안에 실제로 존재하는지 확인
-          # renderer_build가 소스에 없으면 "빌드 산출물"이 없다는 뜻이라 추가 빌드가 필요함
           echo "== www top =="
           ls -la www | head
 
