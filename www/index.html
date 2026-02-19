@@ -233,7 +233,17 @@ async function testAsset(url){
           }
         });
       })();
-
+// DEBUG: 어떤 경로로 이미지를 요청하는지 다 찍기
+(() => {
+  const desc = Object.getOwnPropertyDescriptor(Image.prototype, "src");
+  if (!desc || !desc.set) return;
+  Object.defineProperty(Image.prototype, "src", {
+    set(v) {
+      if (typeof v === "string" && v.includes("/images/")) bootLine("IMG REQ: " + v, "bad");
+      return desc.set.call(this, v);
+    }
+  });
+})();
       Entry.init(document.getElementById("entryContainer"), {
         type: "workspace",
         libDir: "/lib",
