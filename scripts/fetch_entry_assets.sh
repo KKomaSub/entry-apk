@@ -274,101 +274,26 @@ else
   log "✅ FETCH SUMMARY: all downloads OK"
 fi
 # ============================================================
-# ✅ ONLY ADD: scan JS/CSS for /images/, /media/, /uploads/ and fetch all (subfolders 포함)
-# ============================================================
-bigwarn "RESTORE: scan bundles/css for /images|/media|/uploads paths and fetch missing (subfolder assets)"
+# 병렬 수 (원하는 값으로)
+P="${P:-5}"
 
-ASSET_SCAN_FILES=(
-  "$WWW/lib/entryjs/dist/entry.min.js"
-  "$WWW/lib/entryjs/dist/entry.css"
-  "$WWW/lib/entry-tool/dist/entry-tool.css"
-  "$WWW/lib/entry-paint/dist/static/js/entry-paint.js"
-  "$WWW/lib/entryjs/extern/util/static.js"
-)
+# 1) js/html/css만 파일 리스트 생성 (한 번만)
+find www -type f \( -name '*.js' -o -name '*.html' -o -name '*.css' \) -print0 \
+  > www/.web_files.bin
 
-ASSET_HOSTS=(
-  "https://playentry.org"
-  "https://entry-cdn.pstatic.net"
-)
+# 2) 파일별 병렬 검색 (예: /images|/media|/uploads 경로 뽑기)
+xargs -0 -P "$P" -n 1 bash -lc '
+  f="$1"
+  # 파일마다 결과를 임시로 따로 저장(충돌 방지)
+  out="www/.scan.$(echo "$f" | tr "/ " "__").txt"
+  grep -aoE "(/(images|media|uploads)/[^\"'\''\)\s?#]+)" "$f" \
+    | sed -E "s/[?].*$//" \
+    | sort -u > "$out" || true
+' _ < www/.web_files.bin
 
-# rel like /images/icon/a.png -> save to $WWW/images/icon/a.png
-asset_out_path() {
-  local rel="$1"
-  rel="${rel#./}"
-  rel="${rel#/}"
-  echo "$WWW/$rel"
-}
-
-fetch_candidates() {
-  local rel="$1" out="$2"
-  mkdir -p "$(dirname "$out")"
-  # 이미 있으면 스킵
-  if [ -s "$out" ]; then
-    return 0
-  fi
-
-  local h url
-  for h in "${ASSET_HOSTS[@]}"; do
-    url="${h}${rel}"
-    if curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 10 -o "$out" "$url"; then
-      log "OK   ASSET -> $rel"
-      return 0
-    fi
-  done
-
-  # 못 찾으면 실패(계속 진행)
-  bigwarn "ASSET MISS (continued): $rel"
-  return 1
-}
-
-# JS/CSS에서 /images/... /media/... /uploads/... 경로 추출
-extract_asset_paths() {
-  local f="$1"
-  [ -f "$f" ] || return 0
-
-  # 1) url(/images/...), url('/images/...'), "/images/..", '/images/..' 등 모두 잡기
-  # 2) 쿼리스트링 제거 (?v=xxx)
-  # 3) 공백/괄호/따옴표에서 끊기
-  grep -aoE '(/(images|media|uploads)/[^"'\''\)\s?#]+)' "$f" \
-    | sed -E 's/[?].*$//' \
-    | sort -u
-}
-
-# 병렬 다운로드에 기존 job_add/job_wait_all 사용 (수정 금지라 재사용)
-ASSET_TMP="$WWW/.asset_paths.txt"
-: > "$ASSET_TMP"
-
-for f in "${ASSET_SCAN_FILES[@]}"; do
-  if [ -f "$f" ]; then
-    log "SCAN $f"
-    extract_asset_paths "$f" >> "$ASSET_TMP" || true
-  else
-    log "SCAN SKIP (missing): $f"
-  fi
-done
-
-# 중복 제거
-sort -u "$ASSET_TMP" -o "$ASSET_TMP" || true
-
-ASSET_TOTAL="$(wc -l < "$ASSET_TMP" | tr -d ' ')"
-log "ASSET PATHS FOUND = $ASSET_TOTAL"
-
-# 다운로드 큐 추가 (MAX_JOBS 병렬)
-while IFS= read -r rel; do
-  [ -n "$rel" ] || continue
-  out="$(asset_out_path "$rel")"
-  # job_add(url,out,desc) 형태라서, 여기서는 "호스트별로 순회"가 필요 -> fetch_candidates를 job으로 돌림
-  (
-    fetch_candidates "$rel" "$out" || true
-  ) &
-  JOB_PIDS+=("$!")
-  JOB_DESC+=("asset $rel")
-  while [ "${#JOB_PIDS[@]}" -ge "$MAX_JOBS" ]; do
-    job_wait_one
-  done
-done < "$ASSET_TMP"
-
-job_wait_all
+# 3) 결과 합치기(중복 제거)
+cat www/.scan.*.txt 2>/dev/null | sort -u > www/.asset_paths.txt
+echo "ASSET PATHS FOUND = $(wc -l < www/.asset_paths.txt | tr -d ' ')"
 
 # 최종 검증(예시 파일)
 log "VERIFY: $WWW/images/block_icon/ai_hand_icon.svg ?"
