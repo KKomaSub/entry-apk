@@ -705,4 +705,61 @@ grep -RIn "url\(/images" "$WWW" | head -n 20 || true
 log "VERIFY PATCH: find remaining '\"/images/' patterns (should be near 0)"
 grep -RIn "\"/images/" "$WWW" | head -n 20 || true
 # ============================================================
+# ============================================================
+# FIX: Android is case-sensitive. Create lowercase alias copies
+#      and common legacy alias folders for subfolder images.
+# ============================================================
+bigwarn "FIX: case-sensitive subfolder asset aliases (Android-safe)"
+
+IMGROOT="$WWW/images"
+[ -d "$IMGROOT" ] || exit 0
+
+# 1) lower-case directory aliases (e.g. aiUtilize -> aiutilize)
+#    and lower-case file aliases inside those directories.
+while IFS= read -r -d '' path; do
+  rel="${path#$IMGROOT/}"
+  lower_rel="$(echo "$rel" | tr 'A-Z' 'a-z')"
+
+  # if same already, skip
+  [ "$rel" = "$lower_rel" ] && continue
+
+  src="$IMGROOT/$rel"
+  dst="$IMGROOT/$lower_rel"
+
+  if [ -d "$src" ]; then
+    mkdir -p "$dst"
+    # copy contents, resolve symlinks
+    cp -aL "$src/." "$dst/" 2>/dev/null || true
+    log "ALIAS DIR: images/$rel -> images/$lower_rel"
+  fi
+done < <(find "$IMGROOT" -type d -print0 2>/dev/null)
+
+# 2) file aliases (exact lowercase path)
+while IFS= read -r -d '' f; do
+  rel="${f#$IMGROOT/}"
+  lower_rel="$(echo "$rel" | tr 'A-Z' 'a-z')"
+  [ "$rel" = "$lower_rel" ] && continue
+  dst="$IMGROOT/$lower_rel"
+  mkdir -p "$(dirname "$dst")"
+  if [ ! -f "$dst" ]; then
+    cp -aL "$f" "$dst" 2>/dev/null || true
+    log "ALIAS FILE: images/$rel -> images/$lower_rel"
+  fi
+done < <(find "$IMGROOT" -type f -print0 2>/dev/null)
+
+# 3) common legacy alias folders (몇몇 빌드가 이렇게 요청함)
+#    block_icon <-> blockIcon, icon/block_icon 등
+if [ -d "$IMGROOT/block_icon" ]; then
+  mkdir -p "$IMGROOT/icon/block_icon" "$IMGROOT/blockIcon" "$IMGROOT/icon/blockIcon"
+  cp -aL "$IMGROOT/block_icon/." "$IMGROOT/icon/block_icon/" 2>/dev/null || true
+  cp -aL "$IMGROOT/block_icon/." "$IMGROOT/blockIcon/" 2>/dev/null || true
+  cp -aL "$IMGROOT/block_icon/." "$IMGROOT/icon/blockIcon/" 2>/dev/null || true
+  log "ALIAS OK: block_icon -> icon/block_icon, blockIcon, icon/blockIcon"
+fi
+
+log "VERIFY (alias): $IMGROOT/icon/block_icon/ai_hand_icon.svg ?"
+ls -la "$IMGROOT/icon/block_icon/ai_hand_icon.svg" 2>/dev/null || true
+
+log "COUNT www/images files = $(find "$IMGROOT" -type f 2>/dev/null | wc -l | tr -d ' ')"
+# ============================================================
 exit 0
