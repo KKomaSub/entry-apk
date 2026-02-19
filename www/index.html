@@ -19,12 +19,22 @@
   </style>
 
   <script>
-async function testAsset(url){
+async function testAsset(url, timeoutMs = 2500){
+  bootLine(`TEST start ${url}`, "dim");
+
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+
   try{
-    const r = await fetch(url, { cache:"no-store" });
-    bootLine(`TEST ${url} -> ${r.status} ct=${r.headers.get("content-type")}`, r.ok ? "ok":"bad");
+    const r = await fetch(url, { cache:"no-store", signal: ctrl.signal });
+    const ct = r.headers.get("content-type");
+    bootLine(`TEST done  ${url} -> ${r.status} ct=${ct}`, r.ok ? "ok":"bad");
+    return r.ok;
   }catch(e){
-    bootLine(`TEST ${url} -> ERR ${e}`, "bad");
+    bootLine(`TEST fail ${url} -> ${String(e && e.name ? e.name : e)}`, "bad");
+    return false;
+  }finally{
+    clearTimeout(t);
   }
 }
     function bootLine(t, cls="") {
@@ -195,8 +205,8 @@ async function testAsset(url){
       bootLine("HREF = " + location.href)
 
       // globals check
-      await testAsset("/images/_1x1.png");
-      await testAsset("/images/block_icon/ai_hand_icon.svg");
+await testAsset(BASE + "images/_1x1.png");
+await testAsset(BASE + "images/block_icon/ai_hand_icon.svg");
       bootLine("_.memoize = " + (window._ ? typeof _.memoize : "N/A"), window._ ? "ok" : "bad");
       bootLine("$.fn.jquery = " + (window.$ && $.fn ? $.fn.jquery : "N/A"), (window.$ && $.fn) ? "ok" : "bad");
       bootLine("createjs = " + (typeof window.createjs), window.createjs ? "ok" : "bad");
