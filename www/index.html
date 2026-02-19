@@ -17,77 +17,7 @@
     .dim{opacity:.85}
     .ok{color:#66ff66}
   </style>
-<script>
-(function(){
-  // BASE 자동탐지 결과를 쓰고 싶지만, 탐지 전에 필요한 경우가 많아서
-  // "현재 index.html 기준 상대경로"를 1차 기준으로 잡습니다.
-  // => ./images/..., ./media/... 는 Capacitor에서 가장 안정적으로 동작합니다.
-  const REL_BASE = './';
 
-  const rewrite = (u) => {
-    try {
-      if (!u) return u;
-      // 이미 상대경로면 그대로
-      if (u.startsWith('./') || u.startsWith('../')) return u;
-      // data/blob는 그대로
-      if (u.startsWith('data:') || u.startsWith('blob:')) return u;
-
-      // 절대경로 자산만 상대경로로 강제 변환
-      if (u.startsWith('/images/')) return REL_BASE + u.slice(1);
-      if (u.startsWith('/media/'))  return REL_BASE + u.slice(1);
-      if (u.startsWith('/uploads/'))return REL_BASE + u.slice(1);
-
-      return u;
-    } catch(e){ return u; }
-  };
-
-  // fetch 리라이트
-  const _fetch = window.fetch;
-  window.fetch = function(input, init){
-    try{
-      if (typeof input === 'string') input = rewrite(input);
-      else if (input && input.url) input = new Request(rewrite(input.url), input);
-    }catch(e){}
-    return _fetch.call(this, input, init);
-  };
-
-  // XHR 리라이트
-  const _open = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function(method, url){
-    return _open.call(this, method, rewrite(url), ...[].slice.call(arguments, 2));
-  };
-
-  // DOM src/href(이미지/오디오/비디오/링크) 리라이트: MutationObserver로 강제
-  const fixEl = (el) => {
-    if (!el || !el.getAttribute) return;
-    if (el.hasAttribute('src')) {
-      const s = el.getAttribute('src');
-      const r = rewrite(s);
-      if (r !== s) el.setAttribute('src', r);
-    }
-    if (el.hasAttribute('href')) {
-      const h = el.getAttribute('href');
-      const r = rewrite(h);
-      if (r !== h) el.setAttribute('href', r);
-    }
-  };
-
-  new MutationObserver((muts)=>{
-    for (const m of muts){
-      if (m.type === 'attributes') fixEl(m.target);
-      if (m.addedNodes){
-        m.addedNodes.forEach(n=>{
-          if (n.nodeType===1){
-            fixEl(n);
-            n.querySelectorAll && n.querySelectorAll('[src],[href]').forEach(fixEl);
-          }
-        });
-      }
-    }
-  }).observe(document.documentElement, {subtree:true, childList:true, attributes:true, attributeFilter:['src','href']});
-
-})();
-</script>
   <script>
 async function testAsset(url){
   try{
@@ -174,108 +104,7 @@ async function testAsset(url){
         const r = await loadJS(src);
         bootLine((r.ok ? "OK   JS   " : "MISS(opt) ") + src, r.ok ? "ok" : "dim");
       }
-function normalizeAssetUrl(u, BASE) {
-  if (typeof u !== "string" || !u) return u;
 
-  // data/blob/http(s)/capacitor/file 는 그대로
-  const c0 = u.charCodeAt(0);
-  if (
-    u.startsWith("data:") || u.startsWith("blob:") ||
-    u.startsWith("http://") || u.startsWith("https://") ||
-    u.startsWith("capacitor:") || u.startsWith("file:")
-  ) return u;
-
-  // 빠른 prefix 처리 (/images, /media, /uploads)
-  if (c0 === 47 /*'/'*/) {
-    if (u.startsWith("/images/"))  return BASE + "images/"  + u.slice(8);
-    if (u.startsWith("/media/"))   return BASE + "media/"   + u.slice(7);
-    if (u.startsWith("/uploads/")) return BASE + "uploads/" + u.slice(9);
-    return u;
-  }
-
-  // ./images , ./media , ./uploads
-  if (u.startsWith("./images/"))   return BASE + "images/"  + u.slice(9);
-  if (u.startsWith("./media/"))    return BASE + "media/"   + u.slice(8);
-  if (u.startsWith("./uploads/"))  return BASE + "uploads/" + u.slice(10);
-
-  // ../images , ../media , ../uploads
-  if (u.startsWith("../images/"))  return BASE + "images/"  + u.slice(10);
-  if (u.startsWith("../media/"))   return BASE + "media/"   + u.slice(9);
-  if (u.startsWith("../uploads/")) return BASE + "uploads/" + u.slice(11);
-
-  return u;
-}
-
-function installHardAssetRewrite(BASE) {
-  // 공통 setter 패치 함수
-  function patchProp(proto, prop) {
-    if (!proto) return;
-    const d = Object.getOwnPropertyDescriptor(proto, prop);
-    if (!d || !d.set || d.__patchedByEntryOffline) return;
-    Object.defineProperty(proto, prop, {
-      get: d.get,
-      set(v) { return d.set.call(this, normalizeAssetUrl(v, BASE)); }
-    });
-    // 마킹(중복패치 방지)
-    Object.defineProperty(proto, prop).__patchedByEntryOffline = true;
-  }
-
-  // ✅ 이미지/미디어 로드 핵심들만 패치 (DOM 폭주 방지)
-  patchProp(HTMLImageElement && HTMLImageElement.prototype, "src");
-  patchProp(HTMLMediaElement && HTMLMediaElement.prototype, "src");  // audio/video
-  patchProp(HTMLSourceElement && HTMLSourceElement.prototype, "src");
-  patchProp(HTMLScriptElement && HTMLScriptElement.prototype, "src");
-  patchProp(HTMLLinkElement && HTMLLinkElement.prototype, "href");
-
-  // fetch는 “해당 prefix일 때만” rewrite (불필요한 호출 최소화)
-  const _fetch = window.fetch;
-  window.fetch = function (input, init) {
-    if (typeof input === "string") {
-      const ch0 = input.charCodeAt(0);
-      if (
-        ch0 === 47 || // '/'
-        input.startsWith("./") ||
-        input.startsWith("../")
-      ) input = normalizeAssetUrl(input, BASE);
-    }
-    return _fetch.call(this, input, init);
-  };
-
-  // XHR도 동일하게 “필요할 때만”
-  const XHRopen = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function (m, url, ...rest) {
-    if (typeof url === "string") {
-      const ch0 = url.charCodeAt(0);
-      if (ch0 === 47 || url.startsWith("./") || url.startsWith("../")) {
-        url = normalizeAssetUrl(url, BASE);
-      }
-    }
-    return XHRopen.call(this, m, url, ...rest);
-  };
-}
-
-  async function boot() {
-    const candidates = ["./", "/", "/public/", "/www/"];
-    let BASE = "./";
-    for (const c of candidates) {
-      bootLine("PROBE BASE: " + c, "dim");
-      if (await probeBase(c)) { BASE = c; break; }
-    }
-    bootLine("BASE = " + BASE, "ok");
-
-    // ✅✅✅ 여기! (추가)
-    installHardAssetRewrite(BASE);
-    bootLine("HARD ASSET REWRITE installed (root+subfolders)", "ok");
-
-    // (선택) 즉시 실제 로드 테스트: 하위폴더 1개를 강제 로딩해 status 확인
-    try {
-      const t1 = await fetch("/images/_1x1.png", { cache: "no-store" });
-      bootLine("TEST /images/_1x1.png -> " + t1.status, t1.ok ? "ok" : "bad");
-      const t2 = await fetch("/images/block_icon/ai_hand_icon.svg", { cache: "no-store" });
-      bootLine("TEST /images/block_icon/ai_hand_icon.svg -> " + t2.status, t2.ok ? "ok" : "bad");
-    } catch (e) {
-      bootLine("TEST fetch error: " + e, "bad");
-    }
       // core libs
       const jsList = [
         BASE + "lib/lodash/dist/lodash.min.js",
@@ -358,12 +187,13 @@ function installHardAssetRewrite(BASE) {
 
       // EntryStatic path local (이미 적용되어 있다면 그대로 유지)
       // EntryStatic 패치 구간에서 (다른 것 수정 금지)
-if (window.EntryStatic) {
-  EntryStatic.imagePath = "/images/";
-  EntryStatic.mediaPath = "/media/";
-  EntryStatic.uploadPath = "/uploads/";
-}
+      if (window.EntryStatic) {
+        EntryStatic.imagePath = "/images/";
+        EntryStatic.mediaPath = "/media/";
+        EntryStatic.uploadPath = "/uploads/";
+      }
       bootLine("HREF = " + location.href)
+
       // globals check
       await testAsset("/images/_1x1.png");
       await testAsset("/images/block_icon/ai_hand_icon.svg");
@@ -390,23 +220,25 @@ if (window.EntryStatic) {
       must(window.Entry && typeof window.Entry.init === "function", "Entry.init");
 
       bootLine("Starting Entry.init …", "dim");
-// LOG: 어떤 이미지 경로로 실제 요청하는지 잡기
-(function(){
-  const _set = Object.getOwnPropertyDescriptor(Image.prototype, 'src').set;
-  Object.defineProperty(Image.prototype, 'src', {
-    set(v){
-      if (typeof v === "string" && v.includes("/images/")) {
-        bootLine("IMG REQ: " + v, "dim");
-      }
-      return _set.call(this, v);
-    }
-  });
-})();
-Entry.init(document.getElementById("entryContainer"), {
-  type: "workspace",
-  libDir: "/lib",
-  textCodingEnable: true
-});
+
+      // LOG: 어떤 이미지 경로로 실제 요청하는지 잡기
+      (function(){
+        const _set = Object.getOwnPropertyDescriptor(Image.prototype, 'src').set;
+        Object.defineProperty(Image.prototype, 'src', {
+          set(v){
+            if (typeof v === "string" && v.includes("/images/")) {
+              bootLine("IMG REQ: " + v, "dim");
+            }
+            return _set.call(this, v);
+          }
+        });
+      })();
+
+      Entry.init(document.getElementById("entryContainer"), {
+        type: "workspace",
+        libDir: "/lib",
+        textCodingEnable: true
+      });
 
       Entry.loadProject();
       document.getElementById("boot").remove();
@@ -414,21 +246,20 @@ Entry.init(document.getElementById("entryContainer"), {
 
     document.addEventListener("DOMContentLoaded", () => {
       (() => {
-  const desc = Object.getOwnPropertyDescriptor(Image.prototype, "src");
-  if (!desc || !desc.set) return;
-  Object.defineProperty(Image.prototype, "src", {
-    set(v) {
-      if (typeof v === "string" && v.includes("/images/")) bootLine("IMG REQ: " + v, "dim");
-      return desc.set.call(this, v);
-    }
-  });
-})();
+        const desc = Object.getOwnPropertyDescriptor(Image.prototype, "src");
+        if (!desc || !desc.set) return;
+        Object.defineProperty(Image.prototype, "src", {
+          set(v) {
+            if (typeof v === "string" && v.includes("/images/")) bootLine("IMG REQ: " + v, "dim");
+            return desc.set.call(this, v);
+          }
+        });
+      })();
       boot().catch(e => {
         bootLine("Boot Error", "bad");
         bootLine(String(e && e.stack ? e.stack : e), "bad");
       });
       // === DEBUG: 이미지 요청 경로 찍기(경로 문제 확정용) ===
-
     });
   </script>
 </head>
