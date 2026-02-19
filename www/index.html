@@ -206,49 +206,53 @@ function normalizeAssetUrl(u, BASE) {
   return u;
 }
 
-  function installHardAssetRewrite(BASE) {
-    // 1) <img src>, <audio src>, <video src>, <source src> 등
-    const _setAttr = Element.prototype.setAttribute;
-    Element.prototype.setAttribute = function (name, value) {
-      if ((name === "src" || name === "href") && typeof value === "string") {
-        value = normalizeAssetUrl(value, BASE);
-      }
-      return _setAttr.call(this, name, value);
-    };
-
-    // 2) JS에서 직접 img.src = "...", audio.src = "..." 하는 케이스
-    const imgDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
-    if (imgDesc && imgDesc.set) {
-      Object.defineProperty(HTMLImageElement.prototype, "src", {
-        get: imgDesc.get,
-        set(v) { return imgDesc.set.call(this, normalizeAssetUrl(v, BASE)); }
-      });
-    }
-
-    const mediaProto = HTMLMediaElement && HTMLMediaElement.prototype;
-    if (mediaProto) {
-      const mDesc = Object.getOwnPropertyDescriptor(mediaProto, "src");
-      if (mDesc && mDesc.set) {
-        Object.defineProperty(mediaProto, "src", {
-          get: mDesc.get,
-          set(v) { return mDesc.set.call(this, normalizeAssetUrl(v, BASE)); }
-        });
-      }
-    }
-
-    // 3) fetch/XHR도 같이 (이미 해두셨다면 중복이어도 안전)
-    const _fetch = window.fetch;
-    window.fetch = function (input, init) {
-      if (typeof input === "string") input = normalizeAssetUrl(input, BASE);
-      return _fetch.call(this, input, init);
-    };
-
-    const XHRopen = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function (m, url, ...rest) {
-      url = normalizeAssetUrl(url, BASE);
-      return XHRopen.call(this, m, url, ...rest);
-    };
+function installHardAssetRewrite(BASE) {
+  // 공통 setter 패치 함수
+  function patchProp(proto, prop) {
+    if (!proto) return;
+    const d = Object.getOwnPropertyDescriptor(proto, prop);
+    if (!d || !d.set || d.__patchedByEntryOffline) return;
+    Object.defineProperty(proto, prop, {
+      get: d.get,
+      set(v) { return d.set.call(this, normalizeAssetUrl(v, BASE)); }
+    });
+    // 마킹(중복패치 방지)
+    Object.defineProperty(proto, prop).__patchedByEntryOffline = true;
   }
+
+  // ✅ 이미지/미디어 로드 핵심들만 패치 (DOM 폭주 방지)
+  patchProp(HTMLImageElement && HTMLImageElement.prototype, "src");
+  patchProp(HTMLMediaElement && HTMLMediaElement.prototype, "src");  // audio/video
+  patchProp(HTMLSourceElement && HTMLSourceElement.prototype, "src");
+  patchProp(HTMLScriptElement && HTMLScriptElement.prototype, "src");
+  patchProp(HTMLLinkElement && HTMLLinkElement.prototype, "href");
+
+  // fetch는 “해당 prefix일 때만” rewrite (불필요한 호출 최소화)
+  const _fetch = window.fetch;
+  window.fetch = function (input, init) {
+    if (typeof input === "string") {
+      const ch0 = input.charCodeAt(0);
+      if (
+        ch0 === 47 || // '/'
+        input.startsWith("./") ||
+        input.startsWith("../")
+      ) input = normalizeAssetUrl(input, BASE);
+    }
+    return _fetch.call(this, input, init);
+  };
+
+  // XHR도 동일하게 “필요할 때만”
+  const XHRopen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (m, url, ...rest) {
+    if (typeof url === "string") {
+      const ch0 = url.charCodeAt(0);
+      if (ch0 === 47 || url.startsWith("./") || url.startsWith("../")) {
+        url = normalizeAssetUrl(url, BASE);
+      }
+    }
+    return XHRopen.call(this, m, url, ...rest);
+  };
+}
 
   async function boot() {
     const candidates = ["./", "/", "/public/", "/www/"];
