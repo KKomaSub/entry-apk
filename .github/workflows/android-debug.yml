@@ -9,7 +9,6 @@ jobs:
   build-debug-apk:
     runs-on: ubuntu-latest
 
-    # ✅ ADD: artifact 삭제를 위해 필요
     permissions:
       contents: read
       actions: write
@@ -25,6 +24,7 @@ jobs:
 
       - name: Install deps
         run: npm install
+
       - name: Fetch entry-offline source (git clone)
         run: |
           set -Eeuo pipefail
@@ -37,87 +37,105 @@ jobs:
 
       - name: Fetch assets into www
         run: |
+          set -Eeuo pipefail
           bash scripts/fetch_entry_assets.sh
           du -sh www || true
           ls -la www || true
           test -f www/index.html
 
-      # ✅ 핵심: Upload 전에 www를 entry-offline renderer 구조로 덮어씌우기(자동탐지)
-      # - rm -rf www 금지 (자산 날아가면 이미지/오디오/기능 다 깨짐)
-      - name: Build www from entry-offline renderer (auto-detect)
+      # ✅ 핵심: entry-offline renderer 리소스를 www에 "추가"하고,
+      # main.html을 www/index.html로 쓰되 "경로를 www 기준으로 자동 치환"
+      - name: Apply entry-offline main.html into www (copy + rewrite paths)
         run: |
           set -Eeuo pipefail
 
-          echo "== repo top =="
-          ls -la
-
-          echo "== find entry-offline dir =="
-          find . -maxdepth 6 -type d -name "entry-offline" -print || true
-
-          # 1) entry-offline main.html 위치 탐색
-          MAIN_HTML="$(find . -maxdepth 12 -type f -path "*entry-offline*src/main/views/main.html" | head -n 1 || true)"
-          if [ -z "$MAIN_HTML" ]; then
-            echo "ERROR: main.html not found under entry-offline/src/main/views/main.html"
+          echo "== locate entry-offline main.html =="
+          MAIN_HTML="entry-offline/src/main/views/main.html"
+          if [ ! -f "$MAIN_HTML" ]; then
+            echo "ERROR: not found: $MAIN_HTML"
             echo "DEBUG: candidates(main.html):"
-            find . -maxdepth 15 -type f -name "main.html" -print | head -n 50 || true
+            find entry-offline -type f -name "main.html" -print | head -n 50 || true
             exit 1
           fi
-          echo "FOUND main.html: $MAIN_HTML"
+          echo "FOUND: $MAIN_HTML"
 
-          # 2) www 엔트리포인트는 index.html 이어야 하므로 main.html -> www/index.html로 반영
-          cp -f "$MAIN_HTML" "www/index.html"
-          echo "OK: main.html -> www/index.html"
-
-          # 3) main.html이 참조하는 상대경로들(../../renderer_build, ../../renderer/resources 등) 복사
-          echo "== copy renderer_build/resources if exist =="
-
-          # renderer_build
-          RB="$(find . -maxdepth 12 -type d -path "*entry-offline*src/renderer_build" | head -n 1 || true)"
-          if [ -n "$RB" ]; then
-            mkdir -p "www/renderer_build"
-            cp -a "$RB/." "www/renderer_build/"
-            echo "COPIED: $RB -> www/renderer_build"
-          else
-            echo "WARN: renderer_build not found"
-          fi
-
-          # renderer/resources
-          RES="$(find . -maxdepth 15 -type d -path "*entry-offline*src/renderer/resources" | head -n 1 || true)"
-          if [ -n "$RES" ]; then
+          echo "== copy entry-offline renderer resources =="
+          # main.html이 참조하는 ../../renderer/resources/** 를 www/renderer/resources/**로 맞춰줌
+          if [ -d "entry-offline/src/renderer/resources" ]; then
             mkdir -p "www/renderer/resources"
-            cp -a "$RES/." "www/renderer/resources/"
-            echo "COPIED: $RES -> www/renderer/resources"
+            cp -a "entry-offline/src/renderer/resources/." "www/renderer/resources/"
+            echo "COPIED: entry-offline/src/renderer/resources -> www/renderer/resources"
           else
-            echo "WARN: renderer/resources not found"
+            echo "WARN: entry-offline/src/renderer/resources not found"
           fi
 
-          # (옵션) renderer/resources/paint 구조가 있으면 복사
-          PAINT="$(find . -maxdepth 18 -type d -path "*entry-offline*src/renderer/resources/paint" | head -n 1 || true)"
-          if [ -n "$PAINT" ]; then
-            mkdir -p "www/renderer/resources/paint"
-            cp -a "$PAINT/." "www/renderer/resources/paint/"
-            echo "COPIED: $PAINT -> www/renderer/resources/paint"
+          # renderer_build는 repo에 없을 수 있음(빌드 산출물) → 있으면 복사, 없으면 경고만
+          if [ -d "entry-offline/src/renderer_build" ]; then
+            mkdir -p "www/renderer_build"
+            cp -a "entry-offline/src/renderer_build/." "www/renderer_build/"
+            echo "COPIED: entry-offline/src/renderer_build -> www/renderer_build"
+          else
+            echo "WARN: entry-offline/src/renderer_build not found (might be build output)"
           fi
+
+          echo "== replace www/index.html with main.html (then rewrite paths) =="
+          cp -f "$MAIN_HTML" "www/index.html"
+
+          # ------------------------------------------------------------
+          # ✅ 가장 중요:
+          # main.html 안의 경로는 "src/main/views 기준 상대경로"라서
+          # www/index.html로 가져오면 전부 깨짐 → www 기준으로 강제 치환
+          # ------------------------------------------------------------
+          perl -0777 -i -pe '
+            # entry-offline 상대경로(../../...) -> www 기준(./...)
+            s#\.\./\.\./renderer/resources/#./renderer/resources/#g;
+            s#\.\./\.\./renderer_build/#./renderer_build/#g;
+
+            # node_modules 참조는 현재 workflow가 vendoring 해둔 www/lib 구조로 치환
+            s#\.\./\.\./\.\./node_modules/entry-js/#./lib/entryjs#g;
+            s#\.\./\.\./\.\./node_modules/entry-tool/#./lib/entry-tool#g;
+            s#\.\./\.\./\.\./node_modules/lodash/lodash\.min\.js#./lib/lodash/dist/lodash.min.js#g;
+            s#\.\./\.\./\.\./node_modules/jquery/dist/jquery\.min\.js#./lib/jquery/jquery.min.js#g;
+
+            # legacy-video (이미 www/lib/module/legacy-video/index.js로 받아둔 구조)
+            s#\.\./\.\./\.\./node_modules/\@entrylabs/legacy-video/dist/index\.js#./lib/module/legacy-video/index.js#g;
+
+            # entry-js dist 파일명: main.html은 entry.js를 기대할 수 있는데, 우리는 entry.min.js만 받음
+            # -> entry.min.js로 강제 (필요시 entry.js도 fetch script에서 추가하면 더 좋음)
+            s#\./lib/entryjs/dist/entry\.js#./lib/entryjs/dist/entry.min.js#g;
+
+          ' "www/index.html"
 
           echo "== www verify =="
-          ls -la www | head -n 60
+          ls -la www | head -n 80
           echo "== www/index.html head =="
-          head -n 40 www/index.html
+          head -n 50 www/index.html
 
           echo "== index.html refs quick scan =="
-          grep -oE 'src="[^"]+|href="[^"]+' -n www/index.html | head -n 120 || true
+          (grep -oE 'src="[^"]+|href="[^"]+' -n www/index.html | head -n 200) || true
+
+          echo "== sanity: must-have files check =="
+          test -f "www/lib/entryjs/dist/entry.min.js"
+          test -f "www/lib/entryjs/dist/entry.css"
+          test -f "www/lib/entry-tool/dist/entry-tool.js"
+          test -f "www/lib/entry-tool/dist/entry-tool.css"
+          test -f "www/lib/jquery/jquery.min.js"
+          test -f "www/lib/lodash/dist/lodash.min.js"
 
       - name: Ensure Android platform
         run: |
+          set -Eeuo pipefail
           if [ ! -d "android" ]; then
             npx cap add android
           fi
 
       - name: Copy web assets to Android
         run: |
+          set -Eeuo pipefail
           npx cap sync android
           npx cap copy android
           du -sh android/app/src/main/assets/public || true
+          ls -la android/app/src/main/assets/public | head -n 50 || true
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -127,20 +145,21 @@ jobs:
 
       - name: Build Debug APK
         run: |
+          set -Eeuo pipefail
           cd android
           ./gradlew clean assembleDebug
 
       - name: Inspect APK contents (must include images)
         run: |
+          set -Eeuo pipefail
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
           test -f "$APK"
-          unzip -l "$APK" | grep -E "assets/public/images/" | head -n 20 || true
+          unzip -l "$APK" | grep -E "assets/public/images/" | head -n 30 || true
           echo "== image count inside apk =="
           unzip -l "$APK" | grep -E "assets/public/images/" | wc -l || true
           echo "== sample nested file inside apk =="
           unzip -l "$APK" | grep -F "assets/public/images/block_icon/ai_hand_icon.svg" || true
 
-      # ✅ 중복 제거: cleanup 스텝은 1개만 유지
       - name: Cleanup old artifacts (keep latest 1)
         uses: actions/github-script@v7
         with:
@@ -156,7 +175,7 @@ jobs:
 
             const list = artifacts
               .filter(a => a.name === name && !a.expired)
-              .sort((a,b) => new Date(a.created_at) - new Date(b.created_at)); // 오래된 순
+              .sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
 
             const toDelete = list.slice(0, Math.max(0, list.length - 1));
             for (const a of toDelete) {
