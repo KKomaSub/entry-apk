@@ -43,8 +43,8 @@ jobs:
           ls -la www || true
           test -f www/index.html
 
-      # ✅ 핵심: entry-offline renderer 리소스를 www에 "추가"하고,
-      # main.html을 www/index.html로 쓰되 "경로를 www 기준으로 자동 치환"
+      # ✅✅✅ (추가/수정) entry-offline main.html을 www에 적용하되, 경로를 www 기준으로 치환하고
+      #           main.html이 참조하는 renderer/resources, renderer_build도 www에 "추가"로 복사
       - name: Apply entry-offline main.html into www (copy + rewrite paths)
         run: |
           set -Eeuo pipefail
@@ -97,11 +97,16 @@ jobs:
             s#\.\./\.\./\.\./node_modules/lodash/lodash\.min\.js#./lib/lodash/dist/lodash.min.js#g;
             s#\.\./\.\./\.\./node_modules/jquery/dist/jquery\.min\.js#./lib/jquery/jquery.min.js#g;
 
+            # literallycanvas-mobile (fetch script로 별도 로컬화 안 했다면, 여기서는 renderer 리소스로 대체 불가)
+            # -> 만약 main.html에서 literallycanvas-mobile 경로가 남아있으면, 아래처럼 "renderer/resources/paint"를 쓰지 않으므로
+            #    fetch script에서 literallycanvas를 vendoring 하거나(권장), main.html 내 링크를 제거/대체해야 함.
+            #    (여기서는 수정 금지 조건이라 미치환)
+
             # legacy-video (이미 www/lib/module/legacy-video/index.js로 받아둔 구조)
             s#\.\./\.\./\.\./node_modules/\@entrylabs/legacy-video/dist/index\.js#./lib/module/legacy-video/index.js#g;
 
             # entry-js dist 파일명: main.html은 entry.js를 기대할 수 있는데, 우리는 entry.min.js만 받음
-            # -> entry.min.js로 강제 (필요시 entry.js도 fetch script에서 추가하면 더 좋음)
+            # -> entry.min.js로 강제 (entry.js도 필요하면 fetch script에 추가 권장)
             s#\./lib/entryjs/dist/entry\.js#./lib/entryjs/dist/entry.min.js#g;
 
           ' "www/index.html"
@@ -112,7 +117,9 @@ jobs:
           head -n 50 www/index.html
 
           echo "== index.html refs quick scan =="
-          (grep -oE 'src="[^"]+|href="[^"]+' -n www/index.html | head -n 200) || true
+          set +o pipefail
+          grep -oE 'src="[^"]+|href="[^"]+' -n www/index.html | head -n 200 || true
+          set -o pipefail
 
           echo "== sanity: must-have files check =="
           test -f "www/lib/entryjs/dist/entry.min.js"
