@@ -25,6 +25,15 @@ jobs:
 
       - name: Install deps
         run: npm install
+      - name: Fetch entry-offline source (git clone)
+        run: |
+          set -Eeuo pipefail
+          rm -rf entry-offline || true
+          git clone --depth 1 https://github.com/entrylabs/entry-offline.git entry-offline
+          echo "== entry-offline top =="
+          ls -la entry-offline | head -n 50
+          echo "== find main.html =="
+          find entry-offline -type f -name "main.html" -print | head -n 50
 
       - name: Fetch assets into www
         run: |
