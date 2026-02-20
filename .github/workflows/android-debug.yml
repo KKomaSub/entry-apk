@@ -38,43 +38,40 @@ jobs:
           find entry-offline -type f -name "main.html" -print | head -n 50 || true
 
       # ✅ 추가: Linux(case-sensitive)에서 ./components/Index import 깨지는 문제 자동 보정
-      - name: Fix case-sensitive import (components/Index)
+      - name: Patch entry-offline import casing (Index -> index)
         run: |
           set -Eeuo pipefail
 
-          BASE="entry-offline/src/renderer/components"
-          if [ ! -d "$BASE" ]; then
-            echo "WARN: no dir: $BASE"
-            exit 0
+          # 1) 혹시 이전 실행에서 남아있을 수 있는 대문자 복사본 제거
+          rm -f entry-offline/src/renderer/components/Index.tsx \
+                entry-offline/src/renderer/components/Index.ts \
+                entry-offline/src/renderer/components/Index.jsx \
+                entry-offline/src/renderer/components/Index.js || true
+
+          # 2) import를 실제 파일명에 맞게 통일 (가장 안전)
+          TARGET="entry-offline/src/renderer/renderEntry.tsx"
+          if [ -f "$TARGET" ]; then
+            sed -i 's#\./components/Index#./components/index#g' "$TARGET"
+            sed -i 's#\./components/Index\.tsx#./components/index.tsx#g' "$TARGET" || true
+            echo "PATCHED: $TARGET"
+            grep -n "components/index" "$TARGET" || true
+          else
+            echo "ERROR: not found: $TARGET"
+            exit 1
           fi
 
-          echo "== components dir listing =="
-          ls -la "$BASE" | head -n 120 || true
-
-          # 후보 파일들: index.tsx / index.ts / index.jsx / index.js
-          # Index.tsx 등이 없으면 alias 파일(복사본) 만들어서 import './components/Index'가 통과하게 함
-          if [ ! -f "$BASE/Index.tsx" ] && [ -f "$BASE/index.tsx" ]; then
-            cp -f "$BASE/index.tsx" "$BASE/Index.tsx"
-            echo "FIXED: index.tsx -> Index.tsx"
-          fi
-          if [ ! -f "$BASE/Index.ts" ] && [ -f "$BASE/index.ts" ]; then
-            cp -f "$BASE/index.ts" "$BASE/Index.ts"
-            echo "FIXED: index.ts -> Index.ts"
-          fi
-          if [ ! -f "$BASE/Index.jsx" ] && [ -f "$BASE/index.jsx" ]; then
-            cp -f "$BASE/index.jsx" "$BASE/Index.jsx"
-            echo "FIXED: index.jsx -> Index.jsx"
-          fi
-          if [ ! -f "$BASE/Index.js" ] && [ -f "$BASE/index.js" ]; then
-            cp -f "$BASE/index.js" "$BASE/Index.js"
-            echo "FIXED: index.js -> Index.js"
+          # 3) 혹시 다른 파일에도 같은 import가 있으면 전부 패치
+          # (있어도 안전, 없어도 안전)
+          grep -RIn --exclude-dir=node_modules "components/Index" entry-offline/src/renderer || true
+          if grep -RIn --exclude-dir=node_modules "components/Index" entry-offline/src/renderer >/dev/null 2>&1; then
+            find entry-offline/src/renderer -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' \) -print0 \
+              | xargs -0 sed -i 's#\./components/Index#./components/index#g'
+            echo "PATCHED: renderer sources (bulk)"
           fi
 
-          # 혹시 반대(대문자만 있고 소문자 없음)면 소문자도 만들어줌
-          if [ ! -f "$BASE/index.tsx" ] && [ -f "$BASE/Index.tsx" ]; then
-            cp -f "$BASE/Index.tsx" "$BASE/index.tsx"
-            echo "FIXED: Index.tsx -> index.tsx"
-          fi
+          # 4) sanity: 이제 Index.* 는 없어야 함
+          ls -la entry-offline/src/renderer/components | head -n 200 || true
+          test ! -f entry-offline/src/renderer/components/Index.tsx || (echo "Index.tsx still exists" && exit 1)
 
       # ✅ 추가: entry-offline renderer_build 실제 생성 (흰화면 방지의 핵심)
       - name: Build entry-offline renderer bundles
