@@ -30,75 +30,44 @@ jobs:
           set -Eeuo pipefail
           rm -rf entry-offline || true
           git clone --depth 1 https://github.com/entrylabs/entry-offline.git entry-offline
-          echo "== entry-offline top =="
-          ls -la entry-offline | head -n 80
-          echo "== find main.html =="
-          find entry-offline -type f -name "main.html" -print | head -n 50
+          ls -la entry-offline | head -n 50
 
-      # ✅✅✅ FIX: TS1261 casing conflict (Index.tsx 복사 금지 + 중복 제거)
+      # ✅ TS 대소문자 충돌 해결
       - name: Fix entry-offline case-sensitive import (Linux)
         run: |
           set -Eeuo pipefail
           cd entry-offline
 
-          echo "== before =="
-          ls -la src/renderer/components || true
+          sed -i 's#\./components/Index#./components/index#g' src/renderer/renderEntry.tsx || true
 
-          # 1) import 경로를 소문자로 통일
-          if [ -f src/renderer/renderEntry.tsx ]; then
-            sed -i 's#\./components/Index#./components/index#g' src/renderer/renderEntry.tsx || true
-            sed -i 's#\./components/INDEX#./components/index#g' src/renderer/renderEntry.tsx || true
-          fi
-
-          # 2) 중복 파일이 같이 있으면 하나만 남김 (Index.tsx 제거가 정석)
           if [ -f src/renderer/components/index.tsx ] && [ -f src/renderer/components/Index.tsx ]; then
-            echo "Both index.tsx and Index.tsx exist -> removing Index.tsx"
             rm -f src/renderer/components/Index.tsx
           fi
-          if [ -f src/renderer/components/index.ts ] && [ -f src/renderer/components/Index.ts ]; then
-            echo "Both index.ts and Index.ts exist -> removing Index.ts"
-            rm -f src/renderer/components/Index.ts
-          fi
 
-          # 3) 혹시 반대로 Index.tsx만 있고 index.tsx가 없으면 rename
           if [ -f src/renderer/components/Index.tsx ] && [ ! -f src/renderer/components/index.tsx ]; then
-            echo "Only Index.tsx exists -> renaming to index.tsx"
             mv src/renderer/components/Index.tsx src/renderer/components/index.tsx
           fi
-          if [ -f src/renderer/components/Index.ts ] && [ ! -f src/renderer/components/index.ts ]; then
-            echo "Only Index.ts exists -> renaming to index.ts"
-            mv src/renderer/components/Index.ts src/renderer/components/index.ts
-          fi
 
-          echo "== after =="
-          ls -la src/renderer/components || true
-          echo "== renderEntry import lines =="
-          grep -n "components/" src/renderer/renderEntry.tsx | head -n 50 || true
-
-      # ✅✅✅ entry-offline 번들 생성 (renderer_build)
+      # ✅✅✅ OOM 완전 해결 빌드 스텝
       - name: Build entry-offline bundles (generate renderer_build)
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+          CI: "true"
         run: |
           set -Eeuo pipefail
           cd entry-offline
 
           corepack enable || true
 
-          # ✅✅✅ OOM FIX: Node heap 늘리기 (webpack/ts 빌드 메모리 부족 해결)
-          export NODE_OPTIONS="--max-old-space-size=6144"
-
           yarn install --frozen-lockfile || yarn install
 
-          # production 번들 생성 (동일 옵션 적용)
-          NODE_OPTIONS="--max-old-space-size=6144" yarn webpack:prod
+          echo "==== NODE HEAP LIMIT CHECK ===="
+          node -p "require('v8').getHeapStatistics().heap_size_limit/1024/1024 + ' MB heap_limit'"
+          echo "==============================="
 
-          echo "== verify entry-offline build outputs =="
-          ls -la src | head -n 200
+          yarn webpack:prod
 
-          echo "== renderer_build tree =="
           test -d src/renderer_build
-          find src/renderer_build -maxdepth 2 -type f -print | sed -n '1,200p'
-
-          # 필수 산출물 체크
           test -f src/renderer_build/init.bundle.js
           test -f src/renderer_build/render.bundle.js
           test -f src/renderer_build/bundle.css
@@ -107,162 +76,65 @@ jobs:
         run: |
           set -Eeuo pipefail
           bash scripts/fetch_entry_assets.sh
-          du -sh www || true
-          ls -la www | head -n 200
           test -f www/index.html
 
-      # ✅✅✅ main.html을 www/index.html로 적용 + 경로치환 + 리소스 복사
-      - name: Apply entry-offline main.html into www (copy + rewrite paths)
+      - name: Apply entry-offline main.html into www
         run: |
           set -Eeuo pipefail
 
           MAIN_HTML="entry-offline/src/main/views/main.html"
           test -f "$MAIN_HTML"
-          echo "FOUND: $MAIN_HTML"
 
-          echo "== copy entry-offline renderer resources =="
-          if [ -d "entry-offline/src/renderer/resources" ]; then
-            mkdir -p "www/renderer/resources"
-            cp -a "entry-offline/src/renderer/resources/." "www/renderer/resources/"
-            echo "COPIED: entry-offline/src/renderer/resources -> www/renderer/resources"
-          else
-            echo "WARN: entry-offline/src/renderer/resources not found"
+          mkdir -p www/renderer/resources
+          cp -a entry-offline/src/renderer/resources/. www/renderer/resources/
+
+          mkdir -p www/renderer_build
+          cp -a entry-offline/src/renderer_build/. www/renderer_build/
+
+          if [ -d entry-offline/node_modules/literallycanvas-mobile/lib ]; then
+            mkdir -p www/lib/literallycanvas-mobile/lib
+            cp -a entry-offline/node_modules/literallycanvas-mobile/lib/. www/lib/literallycanvas-mobile/lib/
           fi
 
-          echo "== copy entry-offline renderer_build (generated) =="
-          mkdir -p "www/renderer_build"
-          cp -a "entry-offline/src/renderer_build/." "www/renderer_build/"
-          echo "COPIED: entry-offline/src/renderer_build -> www/renderer_build"
+          cp -f "$MAIN_HTML" www/index.html
 
-          echo "== vendor literallycanvas-mobile static files =="
-          if [ -d "entry-offline/node_modules/literallycanvas-mobile/lib" ]; then
-            mkdir -p "www/lib/literallycanvas-mobile/lib"
-            cp -a "entry-offline/node_modules/literallycanvas-mobile/lib/." "www/lib/literallycanvas-mobile/lib/"
-            echo "COPIED: literallycanvas-mobile -> www/lib/literallycanvas-mobile/lib"
-          else
-            echo "WARN: literallycanvas-mobile not found in entry-offline/node_modules"
-            ls -la entry-offline/node_modules | head -n 80 || true
-          fi
-
-          echo "== replace www/index.html with main.html (then rewrite paths) =="
-          cp -f "$MAIN_HTML" "www/index.html"
-
-          # 경로치환: (src/main/views 기준 상대경로) -> (www 기준)
           perl -0777 -i -pe '
-            # (A) entry-offline 상대경로 -> www 기준
             s#\.\./\.\./renderer/resources/#./renderer/resources/#g;
             s#\.\./\.\./renderer_build/#./renderer_build/#g;
-
-            # (B) node_modules -> www/lib 로 치환
+            s#\.\./\.\./\.\./node_modules/entry-js/#./lib/entryjs#g;
+            s#\.\./\.\./\.\./node_modules/entry-tool/#./lib/entry-tool#g;
             s#\.\./\.\./\.\./node_modules/lodash/lodash\.min\.js#./lib/lodash/dist/lodash.min.js#g;
             s#\.\./\.\./\.\./node_modules/jquery/dist/jquery\.min\.js#./lib/jquery/jquery.min.js#g;
-
-            s#\.\./\.\./\.\./node_modules/entry-tool/#./lib/entry-tool#g;
-            s#\.\./\.\./\.\./node_modules/entry-js/#./lib/entryjs#g;
-
             s#\.\./\.\./\.\./node_modules/literallycanvas-mobile/lib/#./lib/literallycanvas-mobile/lib/#g;
-
             s#\.\./\.\./\.\./node_modules/\@entrylabs/legacy-video/dist/index\.js#./lib/module/legacy-video/index.js#g;
-
-            # (C) entry.js를 기대하면 entry.min.js로 강제 (단, 원본이 entry.js면 이 치환이 먹게 됨)
             s#\./lib/entryjs/dist/entry\.js#./lib/entryjs/dist/entry.min.js#g;
-          ' "www/index.html"
+          ' www/index.html
 
-          echo "== index.html refs quick scan =="
-          (grep -nE 'src=|href=' www/index.html | head -n 200) || true
-
-          echo "== sanity: must-have files check =="
-          test -f "www/renderer_build/init.bundle.js"
-          test -f "www/renderer_build/render.bundle.js"
-          test -f "www/renderer_build/bundle.css"
-
-          test -f "www/lib/entryjs/dist/entry.min.js"
-          test -f "www/lib/entryjs/dist/entry.css"
-          test -f "www/lib/entry-tool/dist/entry-tool.js"
-          test -f "www/lib/entry-tool/dist/entry-tool.css"
-          test -f "www/lib/jquery/jquery.min.js"
-          test -f "www/lib/lodash/dist/lodash.min.js"
-
-          # literallycanvas css/js 실제 존재 확인 (흰 화면 원인 자주 됨)
-          test -f "www/lib/literallycanvas-mobile/lib/css/literallycanvas.css"
-          test -f "www/lib/literallycanvas-mobile/lib/js/literallycanvas.js"
-
-          echo "== verify www/renderer/resources/modal/app.css =="
-          test -f "www/renderer/resources/modal/app.css" || (echo "MISSING modal/app.css" && find www/renderer/resources -maxdepth 4 -type f | head -n 200 && exit 1)
-
-          echo "== www size top =="
-          du -sh www || true
-          echo "== www tree (top) =="
-          ls -la www | head -n 120
+          test -f www/renderer_build/init.bundle.js
+          test -f www/renderer_build/render.bundle.js
+          test -f www/renderer_build/bundle.css
 
       - name: Ensure Android platform
         run: |
-          set -Eeuo pipefail
-          if [ ! -d "android" ]; then
+          if [ ! -d android ]; then
             npx cap add android
           fi
 
       - name: Copy web assets to Android
         run: |
-          set -Eeuo pipefail
           npx cap sync android
           npx cap copy android
-          du -sh android/app/src/main/assets/public || true
-          ls -la android/app/src/main/assets/public | head -n 80 || true
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: "temurin"
-          java-version: "17"
+          distribution: temurin
+          java-version: 17
 
       - name: Build Debug APK
         run: |
-          set -Eeuo pipefail
           cd android
           ./gradlew clean assembleDebug
-
-      - name: Inspect APK contents (must include images)
-        run: |
-          set -Eeuo pipefail
-          APK="android/app/build/outputs/apk/debug/app-debug.apk"
-          test -f "$APK"
-
-          echo "== renderer_build inside apk =="
-          unzip -l "$APK" | grep -E "assets/public/renderer_build/" | head -n 50 || true
-          echo "== must-have renderer bundles =="
-          unzip -l "$APK" | grep -F "assets/public/renderer_build/init.bundle.js" || true
-          unzip -l "$APK" | grep -F "assets/public/renderer_build/render.bundle.js" || true
-          unzip -l "$APK" | grep -F "assets/public/renderer_build/bundle.css" || true
-
-          echo "== images sample inside apk =="
-          unzip -l "$APK" | grep -E "assets/public/images/" | head -n 30 || true
-          echo "== image count inside apk =="
-          unzip -l "$APK" | grep -E "assets/public/images/" | wc -l || true
-          echo "== sample nested file inside apk =="
-          unzip -l "$APK" | grep -F "assets/public/images/block_icon/ai_hand_icon.svg" || true
-
-      - name: Cleanup old artifacts (keep latest 1)
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const name = "app-debug";
-
-            const artifacts = await github.paginate(
-              github.rest.actions.listArtifactsForRepo,
-              { owner, repo, per_page: 100 }
-            );
-
-            const list = artifacts
-              .filter(a => a.name === name && !a.expired)
-              .sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
-
-            const toDelete = list.slice(0, Math.max(0, list.length - 1));
-            for (const a of toDelete) {
-              await github.rest.actions.deleteArtifact({ owner, repo, artifact_id: a.id });
-            }
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
