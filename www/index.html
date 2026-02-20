@@ -198,9 +198,9 @@ async function testAsset(url, timeoutMs = 2500){
       // EntryStatic path local (이미 적용되어 있다면 그대로 유지)
       // EntryStatic 패치 구간에서 (다른 것 수정 금지)
       if (window.EntryStatic) {
-        EntryStatic.imagePath = "/images/";
-        EntryStatic.mediaPath = "/media/";
-        EntryStatic.uploadPath = "/uploads/";
+        EntryStatic.imagePath = "./images/";
+        EntryStatic.mediaPath = "/.media/";
+        EntryStatic.uploadPath = "./uploads/";
       }
       bootLine("HREF = " + location.href)
 // 실제로 어떤 URL로 이미지를 요청하는지 잡기 (하위폴더 문제 확정용)
@@ -271,7 +271,7 @@ await testAsset(BASE + "images/block_icon/ai_hand_icon.svg");
 })();
       Entry.init(document.getElementById("entryContainer"), {
         type: "workspace",
-        libDir: "/lib",
+        libDir: "./lib",
         textCodingEnable: true
       });
 
