@@ -33,6 +33,71 @@ jobs:
           ls -la www || true
           test -f www/index.html
 
+      # ✅ 핵심: Upload 전에 www를 entry-offline renderer 구조로 덮어씌우기(자동탐지)
+      # - rm -rf www 금지 (자산 날아가면 이미지/오디오/기능 다 깨짐)
+      - name: Build www from entry-offline renderer (auto-detect)
+        run: |
+          set -Eeuo pipefail
+
+          echo "== repo top =="
+          ls -la
+
+          echo "== find entry-offline dir =="
+          find . -maxdepth 6 -type d -name "entry-offline" -print || true
+
+          # 1) entry-offline main.html 위치 탐색
+          MAIN_HTML="$(find . -maxdepth 12 -type f -path "*entry-offline*src/main/views/main.html" | head -n 1 || true)"
+          if [ -z "$MAIN_HTML" ]; then
+            echo "ERROR: main.html not found under entry-offline/src/main/views/main.html"
+            echo "DEBUG: candidates(main.html):"
+            find . -maxdepth 15 -type f -name "main.html" -print | head -n 50 || true
+            exit 1
+          fi
+          echo "FOUND main.html: $MAIN_HTML"
+
+          # 2) www 엔트리포인트는 index.html 이어야 하므로 main.html -> www/index.html로 반영
+          cp -f "$MAIN_HTML" "www/index.html"
+          echo "OK: main.html -> www/index.html"
+
+          # 3) main.html이 참조하는 상대경로들(../../renderer_build, ../../renderer/resources 등) 복사
+          echo "== copy renderer_build/resources if exist =="
+
+          # renderer_build
+          RB="$(find . -maxdepth 12 -type d -path "*entry-offline*src/renderer_build" | head -n 1 || true)"
+          if [ -n "$RB" ]; then
+            mkdir -p "www/renderer_build"
+            cp -a "$RB/." "www/renderer_build/"
+            echo "COPIED: $RB -> www/renderer_build"
+          else
+            echo "WARN: renderer_build not found"
+          fi
+
+          # renderer/resources
+          RES="$(find . -maxdepth 15 -type d -path "*entry-offline*src/renderer/resources" | head -n 1 || true)"
+          if [ -n "$RES" ]; then
+            mkdir -p "www/renderer/resources"
+            cp -a "$RES/." "www/renderer/resources/"
+            echo "COPIED: $RES -> www/renderer/resources"
+          else
+            echo "WARN: renderer/resources not found"
+          fi
+
+          # (옵션) renderer/resources/paint 구조가 있으면 복사
+          PAINT="$(find . -maxdepth 18 -type d -path "*entry-offline*src/renderer/resources/paint" | head -n 1 || true)"
+          if [ -n "$PAINT" ]; then
+            mkdir -p "www/renderer/resources/paint"
+            cp -a "$PAINT/." "www/renderer/resources/paint/"
+            echo "COPIED: $PAINT -> www/renderer/resources/paint"
+          fi
+
+          echo "== www verify =="
+          ls -la www | head -n 60
+          echo "== www/index.html head =="
+          head -n 40 www/index.html
+
+          echo "== index.html refs quick scan =="
+          grep -oE 'src="[^"]+|href="[^"]+' -n www/index.html | head -n 120 || true
+
       - name: Ensure Android platform
         run: |
           if [ ! -d "android" ]; then
@@ -66,37 +131,7 @@ jobs:
           echo "== sample nested file inside apk =="
           unzip -l "$APK" | grep -F "assets/public/images/block_icon/ai_hand_icon.svg" || true
 
-      # ✅ ADD HERE: 업로드 전에 오래된 artifact 자동 삭제 (app-debug만 대상으로)
-      - name: Cleanup old artifacts (keep latest 2)
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const ARTIFACT_NAME = "app-debug";
-            const KEEP = 2; // 최신 2개만 남기기
-
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-
-            // repo의 artifacts 목록
-            const artifacts = await github.paginate(
-              github.rest.actions.listArtifactsForRepo,
-              { owner, repo, per_page: 100 }
-            );
-
-            // 이름 필터 + 오래된 순 정렬
-            const targets = artifacts
-              .filter(a => a.name === ARTIFACT_NAME && !a.expired)
-              .sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
-
-            core.info(`Found ${targets.length} artifact(s) named "${ARTIFACT_NAME}"`);
-
-            // 최신 KEEP개 제외하고 삭제
-            const toDelete = targets.slice(0, Math.max(0, targets.length - KEEP));
-            for (const a of toDelete) {
-              core.info(`Deleting artifact id=${a.id} created_at=${a.created_at}`);
-              await github.rest.actions.deleteArtifact({ owner, repo, artifact_id: a.id });
-            }
-
+      # ✅ 중복 제거: cleanup 스텝은 1개만 유지
       - name: Cleanup old artifacts (keep latest 1)
         uses: actions/github-script@v7
         with:
@@ -125,23 +160,3 @@ jobs:
           name: app-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 1
-
-      - name: Build www from entry-offline renderer
-        run: |
-          set -e
-
-          # 1) www 기본 생성
-          rm -rf www
-          mkdir -p www
-
-          # 2) entry-offline renderer 소스 복사 (소스 위치에 맞게)
-          cp -a entry-offline/src/renderer/. www/
-
-          echo "== www top =="
-          ls -la www | head
-
-          echo "== find renderer_build =="
-          find www -maxdepth 3 -type d -name "renderer_build" -print || true
-
-          echo "== find main.html =="
-          find www -maxdepth 5 -type f -name "main.html" -print || true
