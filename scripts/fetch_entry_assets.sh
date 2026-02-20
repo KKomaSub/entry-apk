@@ -274,26 +274,39 @@ else
   log "✅ FETCH SUMMARY: all downloads OK"
 fi
 # ============================================================
-# 병렬 수 (원하는 값으로)
-P="${P:-5}"
+# ============================================================
+# ✅ FAST SCAN (single-pass, no temp files, no broken pipe)
+# ============================================================
+bigwarn "FAST SCAN: js/html/css -> extract /images|/media|/uploads (parallel)"
 
-# 1) js/html/css만 파일 리스트 생성 (한 번만)
-find www -type f \( -name '*.js' -o -name '*.html' -o -name '*.css' \) -print0 \
-  > www/.web_files.bin
+P="${P:-${MAX_JOBS:-5}}"
 
-# 2) 파일별 병렬 검색 (예: /images|/media|/uploads 경로 뽑기)
-xargs -0 -P "$P" -n 1 bash -lc '
-  f="$1"
-  # 파일마다 결과를 임시로 따로 저장(충돌 방지)
-  out="www/.scan.$(echo "$f" | tr "/ " "__").txt"
-  grep -aoE "(/(images|media|uploads)/[^\"'\''\)\s?#]+)" "$f" \
-    | sed -E "s/[?].*$//" \
-    | sort -u > "$out" || true
-' _ < www/.web_files.bin
+WEB_LIST_BIN="$WWW/.web_files.bin"
+ASSET_TMP="$WWW/.asset_paths.txt"
 
-# 3) 결과 합치기(중복 제거)
-cat www/.scan.*.txt 2>/dev/null | sort -u > www/.asset_paths.txt
-echo "ASSET PATHS FOUND = $(wc -l < www/.asset_paths.txt | tr -d ' ')"
+log "BUILD FILE LIST (js/html/css)..."
+find "$WWW" -type f \( -name '*.js' -o -name '*.html' -o -name '*.css' \) -print0 > "$WEB_LIST_BIN"
+
+TOTAL_FILES="$(tr -cd '\0' < "$WEB_LIST_BIN" | wc -c | tr -d ' ')"
+log "FILES = $TOTAL_FILES"
+
+: > "$ASSET_TMP"
+
+log "SCAN (parallel P=$P)..."
+
+(
+  xargs -0 -P "$P" -n 1 bash -lc '
+    f="$1"
+
+    grep -aoE "(/(images|media|uploads)/[^\"'\''\)\s?#]+)" "$f" \
+      | sed -E "s/[?].*$//" \
+      || true
+  ' _ < "$WEB_LIST_BIN"
+) | sort -u > "$ASSET_TMP"
+
+ASSET_TOTAL="$(wc -l < "$ASSET_TMP" | tr -d ' ')"
+log "ASSET PATHS FOUND = $ASSET_TOTAL"
+# ============================================================
 
 # 최종 검증(예시 파일)
 log "VERIFY: $WWW/images/block_icon/ai_hand_icon.svg ?"
