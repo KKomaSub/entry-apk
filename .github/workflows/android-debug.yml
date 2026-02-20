@@ -35,6 +35,30 @@ jobs:
           echo "== find main.html =="
           find entry-offline -type f -name "main.html" -print | head -n 50
 
+      # ✅✅✅ [추가 핵심 1] entry-offline 내부 webpack 빌드로 renderer_build 생성
+      - name: Build entry-offline bundles (generate renderer_build)
+        run: |
+          set -Eeuo pipefail
+          cd entry-offline
+
+          # yarn이 기본 제공되지만, 혹시 없으면 corepack으로 활성화
+          corepack enable || true
+
+          # entry-offline은 yarn 기반(스크립트에 yarn postinstall/webpack 있음)
+          # --frozen-lockfile가 실패할 수 있어 fallback 추가
+          yarn install --frozen-lockfile || yarn install
+
+          # production 번들 생성 (src/renderer_build, src/main_build 생성)
+          yarn webpack:prod
+
+          echo "== verify entry-offline build outputs =="
+          ls -la src | head -n 200
+          test -d src/renderer_build
+          ls -la src/renderer_build | head -n 200
+          test -f src/renderer_build/init.bundle.js
+          test -f src/renderer_build/render.bundle.js
+          test -f src/renderer_build/bundle.css
+
       - name: Fetch assets into www
         run: |
           set -Eeuo pipefail
@@ -43,91 +67,79 @@ jobs:
           ls -la www || true
           test -f www/index.html
 
-      # ✅✅✅ (추가/수정) entry-offline main.html을 www에 적용하되, 경로를 www 기준으로 치환하고
-      #           main.html이 참조하는 renderer/resources, renderer_build도 www에 "추가"로 복사
+      # ✅✅✅ [추가 핵심 2] main.html을 www/index.html로 쓰되,
+      # renderer/resources + renderer_build(방금 빌드됨) + literallycanvas를 www에 복사하고
+      # main.html의 상대경로(node_modules/../../)를 www 기준으로 치환
       - name: Apply entry-offline main.html into www (copy + rewrite paths)
         run: |
           set -Eeuo pipefail
 
-          echo "== locate entry-offline main.html =="
           MAIN_HTML="entry-offline/src/main/views/main.html"
-          if [ ! -f "$MAIN_HTML" ]; then
-            echo "ERROR: not found: $MAIN_HTML"
-            echo "DEBUG: candidates(main.html):"
-            find entry-offline -type f -name "main.html" -print | head -n 50 || true
-            exit 1
-          fi
-          echo "FOUND: $MAIN_HTML"
+          test -f "$MAIN_HTML"
 
           echo "== copy entry-offline renderer resources =="
-          # main.html이 참조하는 ../../renderer/resources/** 를 www/renderer/resources/**로 맞춰줌
           if [ -d "entry-offline/src/renderer/resources" ]; then
             mkdir -p "www/renderer/resources"
             cp -a "entry-offline/src/renderer/resources/." "www/renderer/resources/"
             echo "COPIED: entry-offline/src/renderer/resources -> www/renderer/resources"
-          else
-            echo "WARN: entry-offline/src/renderer/resources not found"
           fi
 
-          # renderer_build는 repo에 없을 수 있음(빌드 산출물) → 있으면 복사, 없으면 경고만
-          if [ -d "entry-offline/src/renderer_build" ]; then
-            mkdir -p "www/renderer_build"
-            cp -a "entry-offline/src/renderer_build/." "www/renderer_build/"
-            echo "COPIED: entry-offline/src/renderer_build -> www/renderer_build"
+          echo "== copy entry-offline renderer_build (generated) =="
+          mkdir -p "www/renderer_build"
+          cp -a "entry-offline/src/renderer_build/." "www/renderer_build/"
+          echo "COPIED: entry-offline/src/renderer_build -> www/renderer_build"
+
+          # (선택이지만 사실상 필요) literallycanvas-mobile 정적파일을 www/lib로 벤더링
+          # main.html은 node_modules/literallycanvas-mobile/lib/... 를 참조하므로, 우리 구조(www/lib/...)로 맞춰줌
+          if [ -d "entry-offline/node_modules/literallycanvas-mobile/lib" ]; then
+            mkdir -p "www/lib/literallycanvas-mobile/lib"
+            cp -a "entry-offline/node_modules/literallycanvas-mobile/lib/." "www/lib/literallycanvas-mobile/lib/"
+            echo "COPIED: literallycanvas-mobile -> www/lib/literallycanvas-mobile/lib"
           else
-            echo "WARN: entry-offline/src/renderer_build not found (might be build output)"
+            echo "WARN: literallycanvas-mobile not found in entry-offline/node_modules (install failed?)"
+            ls -la entry-offline/node_modules | head -n 50 || true
           fi
 
           echo "== replace www/index.html with main.html (then rewrite paths) =="
           cp -f "$MAIN_HTML" "www/index.html"
 
-          # ------------------------------------------------------------
-          # ✅ 가장 중요:
-          # main.html 안의 경로는 "src/main/views 기준 상대경로"라서
-          # www/index.html로 가져오면 전부 깨짐 → www 기준으로 강제 치환
-          # ------------------------------------------------------------
+          # main.html은 "src/main/views 기준 상대경로"라서 www/index.html로 옮기면 다 깨짐
+          # => www 기준으로 모두 치환
           perl -0777 -i -pe '
-            # entry-offline 상대경로(../../...) -> www 기준(./...)
+            # (A) entry-offline src 기준 상대경로 -> www 기준 상대경로
             s#\.\./\.\./renderer/resources/#./renderer/resources/#g;
             s#\.\./\.\./renderer_build/#./renderer_build/#g;
 
-            # node_modules 참조는 현재 workflow가 vendoring 해둔 www/lib 구조로 치환
-            s#\.\./\.\./\.\./node_modules/entry-js/#./lib/entryjs#g;
-            s#\.\./\.\./\.\./node_modules/entry-tool/#./lib/entry-tool#g;
+            # (B) node_modules 참조 -> 우리가 만든 www/lib/* 구조로 치환
             s#\.\./\.\./\.\./node_modules/lodash/lodash\.min\.js#./lib/lodash/dist/lodash.min.js#g;
             s#\.\./\.\./\.\./node_modules/jquery/dist/jquery\.min\.js#./lib/jquery/jquery.min.js#g;
 
-            # literallycanvas-mobile (fetch script로 별도 로컬화 안 했다면, 여기서는 renderer 리소스로 대체 불가)
-            # -> 만약 main.html에서 literallycanvas-mobile 경로가 남아있으면, 아래처럼 "renderer/resources/paint"를 쓰지 않으므로
-            #    fetch script에서 literallycanvas를 vendoring 하거나(권장), main.html 내 링크를 제거/대체해야 함.
-            #    (여기서는 수정 금지 조건이라 미치환)
+            s#\.\./\.\./\.\./node_modules/entry-tool/#./lib/entry-tool#g;
+            s#\.\./\.\./\.\./node_modules/entry-js/#./lib/entryjs#g;
 
-            # legacy-video (이미 www/lib/module/legacy-video/index.js로 받아둔 구조)
+            # literallycanvas-mobile
+            s#\.\./\.\./\.\./node_modules/literallycanvas-mobile/lib/#./lib/literallycanvas-mobile/lib/#g;
+
+            # legacy-video
             s#\.\./\.\./\.\./node_modules/\@entrylabs/legacy-video/dist/index\.js#./lib/module/legacy-video/index.js#g;
 
-            # entry-js dist 파일명: main.html은 entry.js를 기대할 수 있는데, 우리는 entry.min.js만 받음
-            # -> entry.min.js로 강제 (entry.js도 필요하면 fetch script에 추가 권장)
+            # entry.js vs entry.min.js (우리가 받아둔 건 entry.min.js 중심)
             s#\./lib/entryjs/dist/entry\.js#./lib/entryjs/dist/entry.min.js#g;
-
           ' "www/index.html"
 
-          echo "== www verify =="
-          ls -la www | head -n 80
-          echo "== www/index.html head =="
-          head -n 50 www/index.html
-
-          echo "== index.html refs quick scan =="
-          set +o pipefail
-          grep -oE 'src="[^"]+|href="[^"]+' -n www/index.html | head -n 200 || true
-          set -o pipefail
-
           echo "== sanity: must-have files check =="
+          test -f "www/renderer_build/init.bundle.js"
+          test -f "www/renderer_build/render.bundle.js"
+          test -f "www/renderer_build/bundle.css"
           test -f "www/lib/entryjs/dist/entry.min.js"
           test -f "www/lib/entryjs/dist/entry.css"
           test -f "www/lib/entry-tool/dist/entry-tool.js"
           test -f "www/lib/entry-tool/dist/entry-tool.css"
           test -f "www/lib/jquery/jquery.min.js"
           test -f "www/lib/lodash/dist/lodash.min.js"
+
+          echo "== index.html refs quick scan =="
+          (grep -oE 'src="[^"]+|href="[^"]+' -n www/index.html | head -n 200) || true
 
       - name: Ensure Android platform
         run: |
@@ -161,6 +173,7 @@ jobs:
           set -Eeuo pipefail
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
           test -f "$APK"
+          unzip -l "$APK" | grep -E "assets/public/renderer_build/" | head -n 30 || true
           unzip -l "$APK" | grep -E "assets/public/images/" | head -n 30 || true
           echo "== image count inside apk =="
           unzip -l "$APK" | grep -E "assets/public/images/" | wc -l || true
