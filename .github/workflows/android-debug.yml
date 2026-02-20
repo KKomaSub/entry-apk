@@ -34,6 +34,30 @@ jobs:
           ls -la entry-offline | head -n 50
           echo "== find main.html =="
           find entry-offline -type f -name "main.html" -print | head -n 50
+      - name: Fix entry-offline case-sensitive import (Linux)
+        run: |
+          set -Eeuo pipefail
+          cd entry-offline
+
+          echo "== before =="
+          ls -la src/renderer/components || true
+
+          # 1) 가장 확실: import 경로를 소문자로 패치
+          if [ -f src/renderer/renderEntry.tsx ]; then
+            sed -i 's#\./components/Index#./components/index#g' src/renderer/renderEntry.tsx || true
+          fi
+
+          # 2) 혹시 코드가 Index.tsx를 실제로 요구하는 형태면, 파일 alias도 만들어줌(안전망)
+          if [ -f src/renderer/components/index.tsx ] && [ ! -f src/renderer/components/Index.tsx ]; then
+            cp -a src/renderer/components/index.tsx src/renderer/components/Index.tsx
+          fi
+          if [ -f src/renderer/components/index.ts ] && [ ! -f src/renderer/components/Index.ts ]; then
+            cp -a src/renderer/components/index.ts src/renderer/components/Index.ts
+          fi
+
+          echo "== after =="
+          ls -la src/renderer/components || true
+          grep -n "components/" -n src/renderer/renderEntry.tsx | head -n 20 || true
 
       # ✅✅✅ [추가 핵심 1] entry-offline 내부 webpack 빌드로 renderer_build 생성
       - name: Build entry-offline bundles (generate renderer_build)
