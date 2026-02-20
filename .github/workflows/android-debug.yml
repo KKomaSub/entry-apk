@@ -83,10 +83,13 @@ jobs:
 
           corepack enable || true
 
+          # ✅✅✅ OOM FIX: Node heap 늘리기 (webpack/ts 빌드 메모리 부족 해결)
+          export NODE_OPTIONS="--max-old-space-size=6144"
+
           yarn install --frozen-lockfile || yarn install
 
-          # production 번들 생성
-          yarn webpack:prod
+          # production 번들 생성 (동일 옵션 적용)
+          NODE_OPTIONS="--max-old-space-size=6144" yarn webpack:prod
 
           echo "== verify entry-offline build outputs =="
           ls -la src | head -n 200
