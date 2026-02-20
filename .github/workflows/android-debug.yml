@@ -156,6 +156,8 @@ jobs:
 
           echo "== verify index.html still exists =="
           head -n 40 www/index.html
+          # bootLine 스텁을 <head> 직후에 주입 (Boot Error 방지)
+          perl -0777 -i -pe 's#<head>#<head>\n<script>window.bootLine=(typeof window.bootLine==="function")?window.bootLine:function(){};</script>#' www/index.html
 
       - name: Ensure Android platform
         run: |
