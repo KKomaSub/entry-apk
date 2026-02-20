@@ -123,72 +123,39 @@ jobs:
 
       # ✅ 핵심: entry-offline renderer 리소스를 www에 "추가"하고,
       # main.html을 www/index.html로 쓰되 "경로를 www 기준으로 자동 치환"
-      - name: Apply entry-offline main.html into www (copy + rewrite paths)
+      # ✅ entry-offline 리소스 + 번들만 복사 (index.html 덮어쓰기 금지)
+      - name: Copy entry-offline resources into www (keep index.html)
         run: |
           set -Eeuo pipefail
 
-          echo "== locate entry-offline main.html =="
-          MAIN_HTML="entry-offline/src/main/views/main.html"
-          if [ ! -f "$MAIN_HTML" ]; then
-            echo "ERROR: not found: $MAIN_HTML"
-            echo "DEBUG: candidates(main.html):"
-            find entry-offline -type f -name "main.html" -print | head -n 50 || true
-            exit 1
-          fi
-          echo "FOUND: $MAIN_HTML"
+          # 🔒 기존 index.html 유지
+          test -f www/index.html
+          echo "OK: using existing www/index.html"
 
-          echo "== copy entry-offline renderer resources =="
+          # 1️⃣ renderer resources 복사
           if [ -d "entry-offline/src/renderer/resources" ]; then
             mkdir -p "www/renderer/resources"
             cp -a "entry-offline/src/renderer/resources/." "www/renderer/resources/"
-            echo "COPIED: entry-offline/src/renderer/resources -> www/renderer/resources"
-          else
-            echo "WARN: entry-offline/src/renderer/resources not found"
+            echo "COPIED: renderer/resources"
           fi
 
-          # ✅ renderer_build는 이제 빌드했으니, 존재하는 실제 경로를 찾아서 복사
+          # 2️⃣ renderer_build 복사 (이미 빌드 완료된 상태)
           RB="$(find entry-offline -maxdepth 10 -type d -name "renderer_build" | head -n 1 || true)"
           if [ -n "$RB" ] && [ -d "$RB" ]; then
             mkdir -p "www/renderer_build"
             cp -a "$RB/." "www/renderer_build/"
             echo "COPIED: $RB -> www/renderer_build"
           else
-            echo "ERROR: renderer_build not found even after build"
-            find entry-offline -maxdepth 12 -type f -name "init.bundle.js" -o -name "render.bundle.js" | head -n 50 || true
+            echo "ERROR: renderer_build not found"
             exit 1
           fi
 
-          echo "== replace www/index.html with main.html (then rewrite paths) =="
-          cp -f "$MAIN_HTML" "www/index.html"
-
-          # main.html은 src/main/views 기준 상대경로라서 www/index.html로 가져오면 깨짐 → www 기준으로 치환
-          perl -0777 -i -pe '
-            s#\.\./\.\./renderer/resources/#./renderer/resources/#g;
-            s#\.\./\.\./renderer_build/#./renderer_build/#g;
-
-            s#\.\./\.\./\.\./node_modules/entry-js/#./lib/entryjs#g;
-            s#\.\./\.\./\.\./node_modules/entry-tool/#./lib/entry-tool#g;
-            s#\.\./\.\./\.\./node_modules/lodash/lodash\.min\.js#./lib/lodash/dist/lodash.min.js#g;
-            s#\.\./\.\./\.\./node_modules/jquery/dist/jquery\.min\.js#./lib/jquery/jquery.min.js#g;
-
-            s#\.\./\.\./\.\./node_modules/\@entrylabs/legacy-video/dist/index\.js#./lib/module/legacy-video/index.js#g;
-
-            # entry-js dist: entry.js가 없으면 entry.min.js로
-            s#\./lib/entryjs/dist/entry\.js#./lib/entryjs/dist/entry.min.js#g;
-          ' "www/index.html"
-
-          echo "== www/index.html head =="
-          head -n 60 www/index.html || true
-
-          echo "== must-have files check =="
+          echo "== verify bundles =="
           test -f "www/renderer_build/init.bundle.js"
           test -f "www/renderer_build/render.bundle.js"
-          test -f "www/lib/entryjs/dist/entry.min.js"
-          test -f "www/lib/entryjs/dist/entry.css"
-          test -f "www/lib/entry-tool/dist/entry-tool.js"
-          test -f "www/lib/entry-tool/dist/entry-tool.css"
-          test -f "www/lib/jquery/jquery.min.js"
-          test -f "www/lib/lodash/dist/lodash.min.js"
+
+          echo "== verify index.html still exists =="
+          head -n 40 www/index.html
 
       - name: Ensure Android platform
         run: |
