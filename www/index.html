@@ -213,7 +213,39 @@ async function boot() {
     EntryStatic.uploadPath = "./uploads/";
   }
   bootLine("HREF = " + location.href);
+// ✅ /images/ 로 나가는 절대경로를 ./images/ 상대경로로 변환 (하위폴더 포함)
+(function patchImagesAbsPath(){
+  const fix = (u) => {
+    if (typeof u !== "string") return u;
+    if (u.startsWith("/images/")) return (BASE + "images/") + u.slice("/images/".length);
+    return u;
+  };
 
+  // Image.src
+  const d = Object.getOwnPropertyDescriptor(Image.prototype, "src");
+  if (d && d.set) {
+    Object.defineProperty(Image.prototype, "src", {
+      get: d.get,
+      set(v) { return d.set.call(this, fix(v)); }
+    });
+  }
+
+  // XHR (createjs/preloadjs가 주로 씀)
+  const _open = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url, ...rest){
+    return _open.call(this, method, fix(url), ...rest);
+  };
+
+  // fetch (혹시 쓰는 경우)
+  if (window.fetch) {
+    const _fetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      if (typeof input === "string") return _fetch(fix(input), init);
+      if (input && typeof input.url === "string") return _fetch(fix(input.url), init);
+      return _fetch(input, init);
+    };
+  }
+})();
   // ✅ (삭제) Image.prototype src 훅 1: 제거됨
 
   // globals check
