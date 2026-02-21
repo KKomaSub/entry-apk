@@ -18,22 +18,20 @@
     .ok{color:#66ff66}
   </style>
 <script>
-(function(){
-  function bootLineImpl(t, cls="") {
-    const el = document.getElementById("boot");
-    if (!el) return;
-    const d = document.createElement("div");
-    if (cls) d.className = cls;
-    d.textContent = t;
-    el.appendChild(d);
-    el.scrollTop = el.scrollHeight;
-  }
+function bootLineImpl(t, cls="") {
+  const el = document.getElementById("boot");
+  if (!el) return;
+  const d = document.createElement("div");
+  if (cls) d.className = cls;
+  d.textContent = t;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
+}
 
-  // ✅ 전역 함수로 “고정”
-  window.bootLine = bootLineImpl;
-  window.__bootLine = bootLineImpl;
-  window.__bootline = bootLineImpl;
-})();
+// ✅ 전역 함수로 “고정”
+window.bootLine = bootLineImpl;
+window.__bootLine = bootLineImpl;
+window.__bootline = bootLineImpl;
 </script>
   <script>
   function bootLine(t, cls="") {
@@ -263,28 +261,32 @@ await testAsset(BASE + "images/block_icon/ai_hand_icon.svg");
       bootLine("Starting Entry.init …", "dim");
 
       // LOG: 어떤 이미지 경로로 실제 요청하는지 잡기
-      (function(){
-        const _set = Object.getOwnPropertyDescriptor(Image.prototype, 'src').set;
-        Object.defineProperty(Image.prototype, 'src', {
-          set(v){
-            if (typeof v === "string" && v.includes("/images/")) {
-              bootLine("IMG REQ: " + v, "dim");
-            }
-            return _set.call(this, v);
-          }
-        });
-      })();
-// DEBUG: 어떤 경로로 이미지를 요청하는지 다 찍기
-(() => {
   const desc = Object.getOwnPropertyDescriptor(Image.prototype, "src");
-  if (!desc || !desc.set) return;
-  Object.defineProperty(Image.prototype, "src", {
-    set(v) {
-      if (typeof v === "string" && v.includes("/images/")) bootLine("IMG REQ: " + v, "bad");
-      return desc.set.call(this, v);
-    }
-  });
-})();
+  if (desc && desc.set) {
+    Object.defineProperty(Image.prototype, "src", {
+      get: desc.get,
+      set(v) {
+        if (typeof v === "string" && v.includes("/images/")) {
+          if (typeof bootLine === "function") bootLine("IMG REQ: " + v, "bad");
+        }
+        return desc.set.call(this, v);
+      }
+    });
+  }
+// DEBUG: 어떤 경로로 이미지를 요청하는지 다 찍기
+  const _desc = Object.getOwnPropertyDescriptor(Image.prototype, "src");
+  if (_desc && _desc.set) {
+    const _set = _desc.set;
+    Object.defineProperty(Image.prototype, "src", {
+      get: _desc.get,
+      set(v) {
+        if (typeof v === "string" && v.includes("/images/")) {
+          if (typeof bootLine === "function") bootLine("IMG REQ: " + v, "dim");
+        }
+        return _set.call(this, v);
+      }
+    });
+  }
       Entry.init(document.getElementById("entryContainer"), {
         type: "workspace",
         libDir: "./lib",
@@ -295,23 +297,27 @@ await testAsset(BASE + "images/block_icon/ai_hand_icon.svg");
       document.getElementById("boot").remove();
     }
 
-    document.addEventListener("DOMContentLoaded", () => {
-      (() => {
-        const desc = Object.getOwnPropertyDescriptor(Image.prototype, "src");
-        if (!desc || !desc.set) return;
-        Object.defineProperty(Image.prototype, "src", {
-          set(v) {
-            if (typeof v === "string" && v.includes("/images/")) bootLine("IMG REQ: " + v, "dim");
-            return desc.set.call(this, v);
+document.addEventListener("DOMContentLoaded", () => {
+  {
+    const desc = Object.getOwnPropertyDescriptor(Image.prototype, "src");
+    if (desc && desc.set) {
+      Object.defineProperty(Image.prototype, "src", {
+        get: desc.get,
+        set(v) {
+          if (typeof v === "string" && v.includes("/images/")) {
+            if (typeof bootLine === "function") bootLine("IMG REQ: " + v, "dim");
           }
-        });
-      })();
-      boot().catch(e => {
-        bootLine("Boot Error", "bad");
-        bootLine(String(e && e.stack ? e.stack : e), "bad");
+          return desc.set.call(this, v);
+        }
       });
-      // === DEBUG: 이미지 요청 경로 찍기(경로 문제 확정용) ===
-    });
+    }
+  }
+
+  boot().catch(e => {
+    bootLine("Boot Error", "bad");
+    bootLine(String(e && e.stack ? e.stack : e), "bad");
+  });
+});
   </script>
 </head>
 <body>
