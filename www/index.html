@@ -18,8 +18,8 @@
     .ok{color:#66ff66}
   </style>
 <script>
-(function () {
-  const fn = function (t, cls = "") {
+(function(){
+  function bootLineImpl(t, cls="") {
     const el = document.getElementById("boot");
     if (!el) return;
     const d = document.createElement("div");
@@ -27,17 +27,24 @@
     d.textContent = t;
     el.appendChild(d);
     el.scrollTop = el.scrollHeight;
-  };
+  }
 
-  // ✅ window에 “고정” (다른 코드가 덮어써도 실패하게 잠금)
-  Object.defineProperty(window, "__ENTRY_BOOTLINE__", {
-    value: fn,
-    writable: false,
-    configurable: false,
-  });
+  // ✅ 전역 함수로 “고정”
+  window.bootLine = bootLineImpl;
+  window.__bootLine = bootLineImpl;
+  window.__bootline = bootLineImpl;
 })();
 </script>
   <script>
+  function bootLine(t, cls="") {
+      const el = document.getElementById("boot");
+      if (!el) return;
+      const d = document.createElement("div");
+      if (cls) d.className = cls;
+      d.textContent = t;
+      el.appendChild(d);
+      el.scrollTop = el.scrollHeight;
+  }
 async function testAsset(url, timeoutMs = 2500){
   bootLine(`TEST start ${url}`, "dim");
 
@@ -56,15 +63,6 @@ async function testAsset(url, timeoutMs = 2500){
     clearTimeout(t);
   }
 }
-    function bootLine(t, cls="") {
-      const el = document.getElementById("boot");
-      if (!el) return;
-      const d = document.createElement("div");
-      if (cls) d.className = cls;
-      d.textContent = t;
-      el.appendChild(d);
-      el.scrollTop = el.scrollHeight;
-    }
     window.onerror = function (m, s, l, c, e) {
       bootLine("JS ERROR:", "bad");
       bootLine(String(e && e.stack ? e.stack : m), "bad");
