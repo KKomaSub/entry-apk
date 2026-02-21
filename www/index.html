@@ -208,8 +208,8 @@ async function boot() {
 
   // EntryStatic path local
   if (window.EntryStatic) {
-    EntryStatic.imagePath = "./images/";
-    EntryStatic.mediaPath = "/.media/";
+    EntryStatic.imagePath = BASE + "images/";
+    EntryStatic.mediaPath = "./media/";
     EntryStatic.uploadPath = "./uploads/";
   }
   bootLine("HREF = " + location.href);
