@@ -221,21 +221,20 @@ async function testAsset(url, timeoutMs = 2500){
       }
       bootLine("HREF = " + location.href)
 // 실제로 어떤 URL로 이미지를 요청하는지 잡기 (하위폴더 문제 확정용)
-(function(){
-  const desc = Object.getOwnPropertyDescriptor(Image.prototype, "src");
-  if (!desc || !desc.set) return;
+const desc = Object.getOwnPropertyDescriptor(Image.prototype, "src");
+if (desc && desc.set) {
   Object.defineProperty(Image.prototype, "src", {
     get: desc.get,
     set(v) {
-      try {
-        if (typeof v === "string" && v.includes("images")) {
+      if (typeof v === "string" && v.includes("images")) {
+        if (typeof bootLine === "function") {
           bootLine("IMG REQ: " + v, "dim");
         }
-      } catch(_) {}
+      }
       return desc.set.call(this, v);
     }
   });
-})();
+}
       // globals check
 await testAsset(BASE + "images/_1x1.png");
 await testAsset(BASE + "images/block_icon/ai_hand_icon.svg");
