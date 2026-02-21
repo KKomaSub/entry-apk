@@ -1,4 +1,4 @@
-// scripts/fetch_dom_js_deps.js
+//// scripts/fetch_dom_js_deps.js
 "use strict";
 
 const fs = require("fs");
