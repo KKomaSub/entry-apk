@@ -775,4 +775,23 @@ ls -la "$IMGROOT/icon/block_icon/ai_hand_icon.svg" 2>/dev/null || true
 
 log "COUNT www/images files = $(find "$IMGROOT" -type f 2>/dev/null | wc -l | tr -d ' ')"
 # ============================================================
+# ============================================================
+# ✅ FINAL FIX: ensure /images/icon/** exists (Entry legacy path)
+# ============================================================
+mkdir -p "$WWW/images/icon" || true
+
+# 1) if we have block_icon, mirror into icon/block_icon
+if [ -d "$WWW/images/block_icon" ]; then
+  mkdir -p "$WWW/images/icon/block_icon"
+  cp -aL "$WWW/images/block_icon/." "$WWW/images/icon/block_icon/" 2>/dev/null || true
+fi
+
+# 2) if we have icon folder inside lib/entryjs, mirror it too
+if [ -d "$WWW/lib/entryjs/images/icon" ]; then
+  mkdir -p "$WWW/images/icon"
+  cp -aL "$WWW/lib/entryjs/images/icon/." "$WWW/images/icon/" 2>/dev/null || true
+fi
+
+# 3) verify
+[ -f "$WWW/images/icon/block_icon/ai_hand_icon.svg" ] || echo "MISS alias: images/icon/block_icon/ai_hand_icon.svg"
 exit 0
