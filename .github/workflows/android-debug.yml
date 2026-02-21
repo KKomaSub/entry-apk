@@ -21,6 +21,28 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "18"
+          cache: "npm"
+
+      # ✅ (추가) Yarn/Gradle 캐시
+      - name: Cache Yarn
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/yarn
+            ~/.yarn/cache
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
       - name: Install deps
         run: npm install
@@ -42,13 +64,11 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          # 1) 혹시 이전 실행에서 남아있을 수 있는 대문자 복사본 제거
           rm -f entry-offline/src/renderer/components/Index.tsx \
                 entry-offline/src/renderer/components/Index.ts \
                 entry-offline/src/renderer/components/Index.jsx \
                 entry-offline/src/renderer/components/Index.js || true
 
-          # 2) import를 실제 파일명에 맞게 통일 (가장 안전)
           TARGET="entry-offline/src/renderer/renderEntry.tsx"
           if [ -f "$TARGET" ]; then
             sed -i 's#\./components/Index#./components/index#g' "$TARGET"
@@ -60,8 +80,6 @@ jobs:
             exit 1
           fi
 
-          # 3) 혹시 다른 파일에도 같은 import가 있으면 전부 패치
-          # (있어도 안전, 없어도 안전)
           grep -RIn --exclude-dir=node_modules "components/Index" entry-offline/src/renderer || true
           if grep -RIn --exclude-dir=node_modules "components/Index" entry-offline/src/renderer >/dev/null 2>&1; then
             find entry-offline/src/renderer -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' \) -print0 \
@@ -69,7 +87,6 @@ jobs:
             echo "PATCHED: renderer sources (bulk)"
           fi
 
-          # 4) sanity: 이제 Index.* 는 없어야 함
           ls -la entry-offline/src/renderer/components | head -n 200 || true
           test ! -f entry-offline/src/renderer/components/Index.tsx || (echo "Index.tsx still exists" && exit 1)
 
@@ -87,7 +104,6 @@ jobs:
 
           echo "== try build commands (entry-offline) =="
           set +e
-          # 여러 repo/버전에서 스크립트명이 다를 수 있어 후보를 순차 시도
           for cmd in \
             "yarn --cwd entry-offline build" \
             "yarn --cwd entry-offline build:renderer" \
@@ -121,25 +137,20 @@ jobs:
           ls -la www | head -n 80 || true
           test -f www/index.html
 
-      # ✅ 핵심: entry-offline renderer 리소스를 www에 "추가"하고,
-      # main.html을 www/index.html로 쓰되 "경로를 www 기준으로 자동 치환"
       # ✅ entry-offline 리소스 + 번들만 복사 (index.html 덮어쓰기 금지)
       - name: Copy entry-offline resources into www (keep index.html)
         run: |
           set -Eeuo pipefail
 
-          # 🔒 기존 index.html 유지
           test -f www/index.html
           echo "OK: using existing www/index.html"
 
-          # 1️⃣ renderer resources 복사
           if [ -d "entry-offline/src/renderer/resources" ]; then
             mkdir -p "www/renderer/resources"
             cp -a "entry-offline/src/renderer/resources/." "www/renderer/resources/"
             echo "COPIED: renderer/resources"
           fi
 
-          # 2️⃣ renderer_build 복사 (이미 빌드 완료된 상태)
           RB="$(find entry-offline -maxdepth 10 -type d -name "renderer_build" | head -n 1 || true)"
           if [ -n "$RB" ] && [ -d "$RB" ]; then
             mkdir -p "www/renderer_build"
@@ -154,9 +165,6 @@ jobs:
           test -f "www/renderer_build/init.bundle.js"
           test -f "www/renderer_build/render.bundle.js"
 
-          echo "== verify index.html still exists =="
-          head -n 40 www/index.html
-          # ✅ bootLine / __bootLine / __bootline 모두 “함수”로 고정(alias)
       - name: Ensure Android platform
         run: |
           set -Eeuo pipefail
@@ -182,7 +190,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           cd android
-          ./gradlew clean assembleDebug
+          # ✅ (수정) clean 제거: 매번 풀빌드 방지
+          ./gradlew assembleDebug
 
       - name: Inspect APK contents (must include renderer_build + images)
         run: |
