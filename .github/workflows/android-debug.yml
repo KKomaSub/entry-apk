@@ -157,8 +157,6 @@ jobs:
           echo "== verify index.html still exists =="
           head -n 40 www/index.html
           # ✅ bootLine / __bootLine / __bootline 모두 “함수”로 고정(alias)
-          perl -0777 -i -pe 's#<head>#<head>\n<script>(function(){\n  function _noop(){}\n  var f = (typeof window.__ENTRY_BOOTLINE__ === \"function\") ? window.__ENTRY_BOOTLINE__\n        : (typeof window.bootLine === \"function\") ? window.bootLine\n        : _noop;\n  window.bootLine = f;\n  window.__bootLine = f;\n  window.__bootline = f; // <-- 소문자 L까지 같이 보장\n})();</script>#' www/index.html
-
       - name: Ensure Android platform
         run: |
           set -Eeuo pipefail
