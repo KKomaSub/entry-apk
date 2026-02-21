@@ -794,4 +794,39 @@ fi
 
 # 3) verify
 [ -f "$WWW/images/icon/block_icon/ai_hand_icon.svg" ] || echo "MISS alias: images/icon/block_icon/ai_hand_icon.svg"
+# ============================================================
+# ✅ FIX: images 하위폴더 레거시 경로 alias 보강
+#   - /images/icon/** 로 요청하는 케이스 대응
+#   - /lib/entryjs/images/** 에만 있는 리소스를 www/images로 승격
+# ============================================================
+
+WWW="www"
+
+# 0) 기본 images 폴더가 비어있으면 entryjs 내부 images를 승격
+if [ -d "$WWW/lib/entryjs/images" ]; then
+  mkdir -p "$WWW/images"
+  cp -aL "$WWW/lib/entryjs/images/." "$WWW/images/" 2>/dev/null || true
+fi
+
+# 1) /images/icon/** 레거시 경로 대응
+mkdir -p "$WWW/images/icon" || true
+
+# 1-1) block_icon이 있으면 icon/block_icon으로 미러
+if [ -d "$WWW/images/block_icon" ]; then
+  mkdir -p "$WWW/images/icon/block_icon"
+  cp -aL "$WWW/images/block_icon/." "$WWW/images/icon/block_icon/" 2>/dev/null || true
+fi
+
+# 1-2) icon 폴더가 따로 있으면 그대로 미러
+if [ -d "$WWW/images/icon" ]; then
+  # 이미 존재하면 스킵(위에서 만들었음)
+  true
+fi
+
+# 2) sanity check (CI 로그에서 바로 확인 가능)
+echo "== CHECK nested images =="
+ls -la "$WWW/images/block_icon" 2>/dev/null | head -n 5 || true
+ls -la "$WWW/images/icon/block_icon" 2>/dev/null | head -n 5 || true
+test -f "$WWW/images/block_icon/ai_hand_icon.svg" && echo "OK: images/block_icon/ai_hand_icon.svg"
+test -f "$WWW/images/icon/block_icon/ai_hand_icon.svg" && echo "OK: images/icon/block_icon/ai_hand_icon.svg"
 exit 0
