@@ -21,7 +21,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "18"
-          cache: "npm"
 
       # ✅ (추가) Yarn/Gradle 캐시
       - name: Cache Yarn
