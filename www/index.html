@@ -18,32 +18,24 @@
     .ok{color:#66ff66}
   </style>
 <script>
-  (function () {
-    // 전역 함수로도 만들고(window.bootLine), 로컬 식별자 bootLine도 보장
-    function _bootLine(){ /* no-op */ }
+(function () {
+  const fn = function (t, cls = "") {
+    const el = document.getElementById("boot");
+    if (!el) return;
+    const d = document.createElement("div");
+    if (cls) d.className = cls;
+    d.textContent = t;
+    el.appendChild(d);
+    el.scrollTop = el.scrollHeight;
+  };
 
-    // window.bootLine이 함수가 아니면 강제로 함수로 교체
-    try {
-      if (typeof window.bootLine !== "function") {
-        Object.defineProperty(window, "bootLine", {
-          value: _bootLine,
-          writable: false,       // ✅ 이후 덮어쓰기 방지
-          configurable: false,   // ✅ 삭제/재정의 방지
-          enumerable: false
-        });
-      }
-    } catch (e) {
-      // defineProperty가 막히는 환경이면 최소한 함수로라도 맞춤
-      window.bootLine = _bootLine;
-    }
-
-    // "bootLine(...)" 형태(윈도우 안 붙인 호출)도 살리기 위해 전역에 노출
-    // (브라우저에선 window 속성이 전역 식별자로도 잡히는 편이라 보통 이것만으로 충분)
-    if (typeof bootLine !== "function") {
-      // eslint-disable-next-line no-global-assign
-      bootLine = window.bootLine;
-    }
-  })();
+  // ✅ window에 “고정” (다른 코드가 덮어써도 실패하게 잠금)
+  Object.defineProperty(window, "__ENTRY_BOOTLINE__", {
+    value: fn,
+    writable: false,
+    configurable: false,
+  });
+})();
 </script>
   <script>
 async function testAsset(url, timeoutMs = 2500){
