@@ -128,16 +128,16 @@ if (!window.__PATH_PATCHED__) {
   const fix = (u) => {
   if (typeof u !== "string") return u;
 
-  // /images/...  ->  BASE + images/...
-  if (u.startsWith("/images/"))
-    u = BASE + "images/" + u.slice("/images/".length);
+  // ✅ 제일 먼저: entry. 오타 경로 교정
+  u = u.replace("/lib/@entrylabs/entry./", "/lib/@entrylabs/entry/");
+  u = u.replace("lib/@entrylabs/entry./", "lib/@entrylabs/entry/");
 
-  // images/... (상대) -> BASE 붙이기
-  else if (u.startsWith("images/"))
-    u = BASE + u;
+  // 기존 로직
+  if (u.startsWith("/images/")) return BASE + "images/" + u.slice("/images/".length);
+  if (u.startsWith("images/")) return BASE + u;
 
-  // ✅ Android Canvas에서 SVG가 깨지는 문제 해결: svg -> png로 강제
-if (u.includes("/images/") && u.endsWith(".svg")) u = u.replace(/\.svg$/i, ".png");
+  // (선택) svg→png 변환도 같이 쓰는 경우
+  if (u.includes("/images/") && u.endsWith(".svg")) u = u.replace(/\.svg$/i, ".png");
 
   return u;
 };
@@ -275,12 +275,22 @@ if (u.includes("/images/") && u.endsWith(".svg")) u = u.replace(/\.svg$/i, ".png
   bootLine("HREF = " + location.href);
 // ✅ /images/ 로 나가는 절대경로를 ./images/ 상대경로로 변환 (하위폴더 포함)
 (function patchImagesAbsPath(){
-  const fix = (u) => {
-    if (typeof u !== "string") return u;
-    if (u.includes("/images/") && u.endsWith(".svg"))
-      u = u.slice(0, -4) + ".png";
-    return u;
-  };
+const fix = (u) => {
+  if (typeof u !== "string") return u;
+
+  // ✅ 제일 먼저: entry. 오타 경로 교정
+  u = u.replace("/lib/@entrylabs/entry./", "/lib/@entrylabs/entry/");
+  u = u.replace("lib/@entrylabs/entry./", "lib/@entrylabs/entry/");
+
+  // 기존 로직
+  if (u.startsWith("/images/")) return BASE + "images/" + u.slice("/images/".length);
+  if (u.startsWith("images/")) return BASE + u;
+
+  // (선택) svg→png 변환도 같이 쓰는 경우
+  if (u.includes("/images/") && u.endsWith(".svg")) u = u.replace(/\.svg$/i, ".png");
+
+  return u;
+};
 
   // Image.src
   const d = Object.getOwnPropertyDescriptor(Image.prototype, "src");
