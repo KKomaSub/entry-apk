@@ -126,18 +126,22 @@ if (!window.__PATH_PATCHED__) {
   window.__PATH_PATCHED__ = true;
 
   const fix = (u) => {
-    if (typeof u !== "string") return u;
+  if (typeof u !== "string") return u;
 
-    // /images/...  ->  BASE + images/...
-    if (u.startsWith("/images/"))
-      return BASE + "images/" + u.slice("/images/".length);
+  // /images/...  ->  BASE + images/...
+  if (u.startsWith("/images/"))
+    u = BASE + "images/" + u.slice("/images/".length);
 
-    // images/... (상대) -> BASE 붙이기
-    if (u.startsWith("images/"))
-      return BASE + u;
+  // images/... (상대) -> BASE 붙이기
+  else if (u.startsWith("images/"))
+    u = BASE + u;
 
-    return u;
-  };
+  // ✅ Android Canvas에서 SVG가 깨지는 문제 해결: svg -> png로 강제
+  if (u.includes("/images/") && u.endsWith(".svg"))
+    u = u.slice(0, -4) + ".png";
+
+  return u;
+};
 
   // 1) fetch URL 변환
   const _fetch = window.fetch.bind(window);
