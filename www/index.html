@@ -116,7 +116,50 @@ async function boot() {
     if (await probeBase(c)) { BASE = c; break; }
   }
   bootLine("BASE = " + BASE, "ok");
+// ✅ FIX: Capacitor에서 /images/... 절대경로가 깨지는 경우 강제 변환
+if (!window.__PATH_PATCHED__) {
+  window.__PATH_PATCHED__ = true;
 
+  const fix = (u) => {
+    if (typeof u !== "string") return u;
+
+    // /images/...  ->  BASE + images/...
+    if (u.startsWith("/images/"))
+      return BASE + "images/" + u.slice("/images/".length);
+
+    // images/... (상대) -> BASE 붙이기
+    if (u.startsWith("images/"))
+      return BASE + u;
+
+    return u;
+  };
+
+  // 1) fetch URL 변환
+  const _fetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    if (typeof input === "string")
+      return _fetch(fix(input), init);
+
+    if (input && typeof input.url === "string")
+      return _fetch(new Request(fix(input.url), input), init);
+
+    return _fetch(input, init);
+  };
+
+  // 2) Image.src 변환
+  const desc = Object.getOwnPropertyDescriptor(Image.prototype, "src");
+  if (desc && desc.set) {
+    Object.defineProperty(Image.prototype, "src", {
+      get: desc.get,
+      set(v) {
+        return desc.set.call(this, fix(v));
+      }
+    });
+  }
+
+  if (typeof bootLine === "function")
+    bootLine("PATCH path: /images/* -> " + BASE + "images/*", "dim");
+}
   // CSS
   const cssList = [
     BASE + "lib/entry-tool/dist/entry-tool.css",
