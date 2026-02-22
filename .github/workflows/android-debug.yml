@@ -236,6 +236,7 @@ jobs:
           chk = os.path.join(ROOT, "images", "icon", "block_icon", "ai_hand_icon.svg")
           print("[fix-images] check:", chk, "OK" if os.path.exists(chk) else "MISS")
           PY
+
       - name: Make PNG fallback for SVG icons (block_icon etc.)
         run: |
           set -Eeuo pipefail
@@ -262,6 +263,24 @@ jobs:
           echo "PNG fallback count:"
           find www/images -type f -name '*.png' | wc -l || true
 
+      # ✅✅✅ (추가만) Convert SVG icons to PNG (for Android Canvas)
+      - name: Convert SVG icons to PNG (for Android Canvas)
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y librsvg2-bin
+
+          # images 아래 모든 svg를 동일 경로에 png로 생성 (기존 png 있으면 스킵)
+          find www/images -type f -name "*.svg" -print0 | while IFS= read -r -d '' f; do
+            out="${f%.svg}.png"
+            if [ ! -f "$out" ]; then
+              rsvg-convert "$f" -o "$out" || true
+            fi
+          done
+
+          echo "SVG count:"; find www/images -type f -name "*.svg" | wc -l || true
+          echo "PNG count:"; find www/images -type f -name "*.png" | wc -l || true
+
       - name: Ensure Android platform
         run: |
           set -Eeuo pipefail
@@ -276,6 +295,7 @@ jobs:
           npx cap copy android
           du -sh android/app/src/main/assets/public || true
           ls -la android/app/src/main/assets/public | head -n 80 || true
+
       - name: Allow cleartext localhost (for http scheme)
         run: |
           set -Eeuo pipefail
