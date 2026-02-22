@@ -127,7 +127,11 @@ if (!window.__PATH_PATCHED__) {
 
   const fix = (u) => {
   if (typeof u !== "string") return u;
+// ✅ entry. 경로 오타( entry./ )를 entry/ 로 보정
+u = u.replace("/lib/@entrylabs/entry./", "/lib/@entrylabs/entry/");
 
+// ✅ Android Canvas용: svg를 png로 강제 치환 (images, entry 이미지 모두)
+if (u.endsWith(".svg")) u = u.slice(0, -4) + ".png";
   // ✅ 제일 먼저: entry. 오타 경로 교정
   u = u.replace("/lib/@entrylabs/entry./", "/lib/@entrylabs/entry/");
   u = u.replace("lib/@entrylabs/entry./", "lib/@entrylabs/entry/");
