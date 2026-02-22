@@ -236,6 +236,31 @@ jobs:
           chk = os.path.join(ROOT, "images", "icon", "block_icon", "ai_hand_icon.svg")
           print("[fix-images] check:", chk, "OK" if os.path.exists(chk) else "MISS")
           PY
+      - name: Make PNG fallback for SVG icons (block_icon etc.)
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y librsvg2-bin
+          # block_icon 폴더의 svg를 png로 변환(같은 이름.png 생성)
+          if [ -d "www/images/block_icon" ]; then
+            find www/images/block_icon -type f -name '*.svg' -print0 | while IFS= read -r -d '' f; do
+              out="${f%.svg}.png"
+              if [ ! -f "$out" ]; then
+                rsvg-convert "$f" -o "$out" || true
+              fi
+            done
+          fi
+          # 레거시 alias쪽도 동일
+          if [ -d "www/images/icon/block_icon" ]; then
+            find www/images/icon/block_icon -type f -name '*.svg' -print0 | while IFS= read -r -d '' f; do
+              out="${f%.svg}.png"
+              if [ ! -f "$out" ]; then
+                rsvg-convert "$f" -o "$out" || true
+              fi
+            done
+          fi
+          echo "PNG fallback count:"
+          find www/images -type f -name '*.png' | wc -l || true
 
       - name: Ensure Android platform
         run: |
