@@ -274,7 +274,8 @@ if (!window.__PATH_PATCHED__) {
 (function patchImagesAbsPath(){
   const fix = (u) => {
     if (typeof u !== "string") return u;
-    if (u.startsWith("/images/")) return (BASE + "images/") + u.slice("/images/".length);
+    if (u.includes("/images/") && u.endsWith(".svg"))
+      u = u.slice(0, -4) + ".png";
     return u;
   };
 
