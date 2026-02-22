@@ -312,6 +312,7 @@ if (u.includes("/images/") && u.endsWith(".svg")) u = u.replace(/\.svg$/i, ".png
   // globals check
 await testAsset(BASE + "images/_1x1.png", 1500);
 await testAsset(BASE + "images/block_icon/ai_hand_icon.svg", 1500);
+  await testAsset(BASE + "images/block_icon/ai_hand_icon.png", 1500);
 // ✅ 여기부터는 반드시 찍혀야 정상
 bootLine("AFTER TESTS", "ok");
 
