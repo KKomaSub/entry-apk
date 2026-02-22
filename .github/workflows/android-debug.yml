@@ -299,6 +299,43 @@ jobs:
 
           echo "entry lib SVG count:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.svg" | wc -l || true
           echo "entry lib PNG count:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.png" | wc -l || true
+      - name: Rewrite SVG references to PNG (Android WebView)
+        run: |
+          set -Eeuo pipefail
+
+          # 1) 대상: www 전체 JS/CSS/HTML 안에서
+          #    "/lib/@entrylabs/entry/images/...*.svg" 또는 "/images/...*.svg" 를 *.png로 치환
+          #    (따옴표/괄호/공백/쿼리스트링 케이스까지 최소 범위로 안전하게)
+          python3 - <<'PY'
+          import os, re
+
+          ROOT="www"
+          exts=(".js",".css",".html")
+
+          # /lib/@entrylabs/entry/images/...svg  또는 /images/...svg  (상대경로 포함)
+          pat = re.compile(r'((?:/|\./|\.\./)?(?:lib/@entrylabs/entry/images|images)/[A-Za-z0-9_\-./]+)\.svg(\b|[?#"\'\)\s])')
+
+          changed=0
+          files=0
+
+          for dp,_,fns in os.walk(ROOT):
+            for fn in fns:
+              if not fn.endswith(exts): 
+                continue
+              p=os.path.join(dp,fn)
+              try:
+                s=open(p,"rb").read().decode("utf-8","ignore")
+              except:
+                continue
+
+              ns, n = pat.subn(r'\1.png\2', s)
+              if n:
+                open(p,"wb").write(ns.encode("utf-8"))
+                changed += n
+                files += 1
+
+          print(f"[rewrite-svg] files_changed={files} refs_changed={changed}")
+          PY
 
       - name: Ensure Android platform
         run: |
