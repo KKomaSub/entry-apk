@@ -279,6 +279,8 @@ jobs:
 
           echo "== sample nested file inside apk =="
           unzip -l "$APK" | grep -F "assets/public/images/block_icon/ai_hand_icon.svg" || true
+          echo "== test func_icon.svg =="
+          unzip -l "$APK" | grep -F "assets/public/images/block_icon/func_icon.svg" || true
 
       - name: Cleanup old artifacts (keep latest 1)
         uses: actions/github-script@v7
