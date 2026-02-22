@@ -251,6 +251,15 @@ jobs:
           npx cap copy android
           du -sh android/app/src/main/assets/public || true
           ls -la android/app/src/main/assets/public | head -n 80 || true
+      - name: Allow cleartext localhost (for http scheme)
+        run: |
+          set -Eeuo pipefail
+          MAN="android/app/src/main/AndroidManifest.xml"
+          test -f "$MAN"
+          if ! grep -q 'usesCleartextTraffic="true"' "$MAN"; then
+            sed -i 's/<application /<application android:usesCleartextTraffic="true" /' "$MAN"
+          fi
+          grep -n 'usesCleartextTraffic' "$MAN" || true
 
       - name: Setup Java
         uses: actions/setup-java@v4
