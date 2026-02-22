@@ -39,23 +39,32 @@ window.__bootline = bootLineImpl;
   // ✅ (수정) 중복 function bootLine(...) 삭제 대신, 기존 호출 호환용 alias 1줄만 유지
   const bootLine = (...args) => window.bootLine(...args);
 
-async function testAsset(url, timeoutMs = 2500){
+async function testAsset(url, timeoutMs = 1500) {
   bootLine(`TEST start ${url}`, "dim");
 
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  const timeout = new Promise((resolve) =>
+    setTimeout(() => resolve({ timeout: true }), timeoutMs)
+  );
 
-  try{
-    const r = await fetch(url, { cache:"no-store", signal: ctrl.signal });
-    const ct = r.headers.get("content-type");
-    bootLine(`TEST done  ${url} -> ${r.status} ct=${ct}`, r.ok ? "ok":"bad");
-    return r.ok;
-  }catch(e){
-    bootLine(`TEST fail ${url} -> ${String(e && e.name ? e.name : e)}`, "bad");
+  const req = fetch(url, { cache: "no-store" })
+    .then((r) => ({ r }))
+    .catch((e) => ({ e }));
+
+  const out = await Promise.race([req, timeout]);
+
+  if (out.timeout) {
+    bootLine(`TEST timeout ${url} (${timeoutMs}ms)`, "bad");
     return false;
-  }finally{
-    clearTimeout(t);
   }
+  if (out.e) {
+    bootLine(`TEST fail ${url} -> ${String(out.e && out.e.name ? out.e.name : out.e)}`, "bad");
+    return false;
+  }
+
+  const r = out.r;
+  const ct = r.headers.get("content-type");
+  bootLine(`TEST done  ${url} -> ${r.status} ct=${ct}`, r.ok ? "ok" : "bad");
+  return r.ok;
 }
 
 window.onerror = function (m, s, l, c, e) {
@@ -249,8 +258,10 @@ async function boot() {
   // ✅ (삭제) Image.prototype src 훅 1: 제거됨
 
   // globals check
-  await testAsset(BASE + "images/_1x1.png");
-  await testAsset(BASE + "images/block_icon/ai_hand_icon.svg");
+await testAsset(BASE + "images/_1x1.png", 1500);
+await testAsset(BASE + "images/block_icon/ai_hand_icon.svg", 1500);
+// ✅ 여기부터는 반드시 찍혀야 정상
+bootLine("AFTER TESTS", "ok");
 
   bootLine("_.memoize = " + (window._ ? typeof _.memoize : "N/A"), window._ ? "ok" : "bad");
   bootLine("$.fn.jquery = " + (window.$ && $.fn ? $.fn.jquery : "N/A"), (window.$ && $.fn) ? "ok" : "bad");
@@ -300,6 +311,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <body>
   <div id="entryContainer"></div>
   <div id="boot">Entry Offline Editor
+Made by KKomaProgrammer 
 Loading…</div>
 </body>
 </html>
