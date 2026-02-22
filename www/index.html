@@ -102,7 +102,12 @@ function loadCSS(href) {
     document.head.appendChild(l);
   });
 }
-
+function hideBootLater(delayMs = 1500) {
+  setTimeout(() => {
+    const el = document.getElementById("boot");
+    if (el) el.remove();
+  }, delayMs);
+}
 function must(cond, msg){
   if(!cond) throw new Error(msg);
   bootLine("OK   " + msg, "ok");
@@ -261,8 +266,8 @@ if (!window.__PATH_PATCHED__) {
   // EntryStatic path local
   if (window.EntryStatic) {
     EntryStatic.imagePath = BASE + "images/";
-    EntryStatic.mediaPath = "./media/";
-    EntryStatic.uploadPath = "./uploads/";
+    EntryStatic.mediaPath = BASE + "media/";
+    EntryStatic.uploadPath = BASE + "uploads/";
   }
   bootLine("HREF = " + location.href);
 // ✅ /images/ 로 나가는 절대경로를 ./images/ 상대경로로 변환 (하위폴더 포함)
@@ -338,7 +343,8 @@ bootLine("AFTER TESTS", "ok");
   });
 
   Entry.loadProject();
-  document.getElementById("boot").remove();
+bootLine("BOOT OK: init+loadProject called, hiding logs…", "dim");
+hideBootLater(1500);   // 1.5초 뒤 제거 (원하면 500~3000ms 조절);
 }
 
 document.addEventListener("DOMContentLoaded", () => {
