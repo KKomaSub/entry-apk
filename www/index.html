@@ -137,8 +137,7 @@ if (!window.__PATH_PATCHED__) {
     u = BASE + u;
 
   // ✅ Android Canvas에서 SVG가 깨지는 문제 해결: svg -> png로 강제
-  if (u.includes("/images/") && u.endsWith(".svg"))
-    u = u.slice(0, -4) + ".png";
+if (u.includes("/images/") && u.endsWith(".svg")) u = u.replace(/\.svg$/i, ".png");
 
   return u;
 };
@@ -340,7 +339,42 @@ bootLine("AFTER TESTS", "ok");
   bootLine("Starting Entry.init …", "dim");
 
   // ✅ (삭제) Image.prototype src 훅 2/3: 제거됨
+if (!window.__TRACE_DRAWIMAGE__) {
+  window.__TRACE_DRAWIMAGE__ = true;
 
+  const proto = CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
+  if (proto && proto.drawImage) {
+
+    const _drawImage = proto.drawImage;
+
+    proto.drawImage = function (...args) {
+      const img = args[0];
+
+      try {
+        return _drawImage.apply(this, args);
+      } catch (e) {
+        try {
+          if (img && img.tagName === "IMG") {
+            if (typeof bootLine === "function") {
+              bootLine("BROKEN drawImage IMG.src = " + img.src, "bad");
+              bootLine(
+                "IMG.complete=" + img.complete +
+                " natural=" + img.naturalWidth + "x" + img.naturalHeight,
+                "bad"
+              );
+            }
+          } else {
+            if (typeof bootLine === "function") {
+              bootLine("drawImage error (non-IMG arg0)", "bad");
+            }
+          }
+        } catch (_) {}
+
+        throw e; // 무시하지 않고 그대로 던짐
+      }
+    };
+  }
+}
   Entry.init(document.getElementById("entryContainer"), {
     type: "workspace",
     libDir: "./lib",
