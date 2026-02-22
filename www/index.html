@@ -131,7 +131,10 @@ if (!window.__PATH_PATCHED__) {
   // ✅ 제일 먼저: entry. 오타 경로 교정
   u = u.replace("/lib/@entrylabs/entry./", "/lib/@entrylabs/entry/");
   u = u.replace("lib/@entrylabs/entry./", "lib/@entrylabs/entry/");
-
+// ✅ Canvas에서 깨지는 entrybot(media) SVG만 PNG로 대체
+if (u.includes("/images/media/") && u.toLowerCase().endsWith(".svg")) {
+  u = u.slice(0, -4) + ".png";
+}
   // 기존 로직
   if (u.startsWith("/images/")) return BASE + "images/" + u.slice("/images/".length);
   if (u.startsWith("images/")) return BASE + u;
