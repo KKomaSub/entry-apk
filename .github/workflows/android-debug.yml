@@ -323,6 +323,8 @@ jobs:
 
           echo "== index.html contains bootLineImpl? =="
           unzip -p "$APK" assets/public/index.html | grep -n "bootLineImpl" || true
+          echo "== index.html contains AFTER TESTS? =="
+          unzip -p "$APK" assets/public/index.html | grep -n "AFTER TESTS" || true
 
       - name: Cleanup old artifacts (keep latest 1)
         uses: actions/github-script@v7
