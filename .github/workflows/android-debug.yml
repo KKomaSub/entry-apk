@@ -175,6 +175,7 @@ jobs:
       - name: Fix missing images paths (case/legacy) in www
         run: |
           set -Eeuo pipefail
+          python3 - <<'PY'
           import os, re, shutil
 
           ROOT = "www"
