@@ -299,6 +299,23 @@ jobs:
 
           echo "entry lib SVG count:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.svg" | wc -l || true
           echo "entry lib PNG count:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.png" | wc -l || true
+      - name: Convert SVG to PNG in @entrylabs/entry images (media)
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y librsvg2-bin
+
+          if [ -d "www/lib/@entrylabs/entry/images" ]; then
+            find "www/lib/@entrylabs/entry/images" -type f -name "*.svg" -print0 | while IFS= read -r -d '' f; do
+              out="${f%.svg}.png"
+              if [ ! -f "$out" ]; then
+                rsvg-convert "$f" -o "$out" || true
+              fi
+            done
+          fi
+
+          echo "entry svg:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.svg" | wc -l || true
+          echo "entry png:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.png" | wc -l || true
       - name: Rewrite SVG references to PNG (Android WebView)
         run: |
           set -Eeuo pipefail
