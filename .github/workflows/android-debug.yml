@@ -159,11 +159,11 @@ jobs:
             echo "ERROR: renderer_build not found"
             exit 1
           fi
-
           echo "== verify bundles =="
           test -f "www/renderer_build/init.bundle.js"
           test -f "www/renderer_build/render.bundle.js"
-      - name: Debug: list entry media files in www
+          
+      - name: Debug list entry media files in www
         run: |
           set -Eeuo pipefail
           echo "== entry media svg/png in www =="
@@ -175,7 +175,7 @@ jobs:
       - name: Fix missing images paths (case/legacy) in www
         run: |
           set -Eeuo pipefail
-          python3 - <<'PY'
+          python3 -c 'import os; print("hi")'
           import os, re, shutil
 
           ROOT = "www"
