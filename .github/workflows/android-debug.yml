@@ -316,6 +316,34 @@ jobs:
 
           echo "entry svg:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.svg" | wc -l || true
           echo "entry png:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.png" | wc -l || true
+      - name: Rewrite entry media SVG refs to PNG
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import os, re
+
+          ROOT="www"
+          exts=(".js",".css",".html")
+
+          # /lib/@entrylabs/entry/images/...*.svg  -> *.png
+          pat = re.compile(r'((?:/|\./|\.\./)?lib/@entrylabs/entry/images/[A-Za-z0-9_\-./]+)\.svg(\b|[?#"\'\)\s])')
+
+          changed=0
+          files=0
+          for dp,_,fns in os.walk(ROOT):
+            for fn in fns:
+              if not fn.endswith(exts): 
+                continue
+              p=os.path.join(dp,fn)
+              s=open(p,"rb").read().decode("utf-8","ignore")
+              ns, n = pat.subn(r'\1.png\2', s)
+              if n:
+                open(p,"wb").write(ns.encode("utf-8"))
+                changed += n
+                files += 1
+
+          print(f"[rewrite-entry-svg] files_changed={files} refs_changed={changed}")
+          PY
       - name: Rewrite SVG references to PNG (Android WebView)
         run: |
           set -Eeuo pipefail
