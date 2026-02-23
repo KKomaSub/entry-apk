@@ -350,7 +350,7 @@ jobs:
           exts=(".js",".css",".html")
 
           # /lib/@entrylabs/entry/images/...*.svg  -> *.png
-          pat = re.compile(r'((?:/|\./|\.\./)?lib/@entrylabs/entry/images/[A-Za-z0-9_\-./]+)\.svg(\b|[?#"\'\)\s])')
+          pat = re.compile(r'((?:https?://[^"\')\s]+/)?(?:/|\./|\.\./)?(?:lib/@entrylabs/entry/images|images)/[A-Za-z0-9_\-./]+)\.svg(\b|[?#"\'\)\s])')
 
           changed=0
           files=0
