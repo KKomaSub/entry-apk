@@ -162,7 +162,7 @@ jobs:
           echo "== verify bundles =="
           test -f "www/renderer_build/init.bundle.js"
           test -f "www/renderer_build/render.bundle.js"
-          
+
       - name: Debug list entry media files in www
         run: |
           set -Eeuo pipefail
@@ -306,149 +306,103 @@ jobs:
 
           echo "entry lib SVG count:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.svg" | wc -l || true
           echo "entry lib PNG count:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.png" | wc -l || true
-      - name: Convert SVG to PNG in @entrylabs/entry images
-        run: |
-          set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y librsvg2-bin
 
-          if [ -d "www/lib/@entrylabs/entry/images" ]; then
-            find "www/lib/@entrylabs/entry/images" -type f -name "*.svg" -print0 | while IFS= read -r -d '' f; do
-              out="${f%.svg}.png"
-              if [ ! -f "$out" ]; then
-                rsvg-convert "$f" -o "$out" || true
-              fi
-            done
-          fi
-
-          echo "== entry media entrybot1 files after convert =="
-          ls -la "www/lib/@entrylabs/entry/images/media" | grep -E "entrybot1\.(svg|png)" || true
-      - name: Convert SVG to PNG in @entrylabs/entry images (media)
-        run: |
-          set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y librsvg2-bin
-
-          if [ -d "www/lib/@entrylabs/entry/images" ]; then
-            find "www/lib/@entrylabs/entry/images" -type f -name "*.svg" -print0 | while IFS= read -r -d '' f; do
-              out="${f%.svg}.png"
-              if [ ! -f "$out" ]; then
-                rsvg-convert "$f" -o "$out" || true
-              fi
-            done
-          fi
-
-          echo "entry svg:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.svg" | wc -l || true
-          echo "entry png:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.png" | wc -l || true
-      - name: Rewrite entry media SVG refs to PNG
+      # ✅✅✅✅✅ (핵심) PNG가 실제 존재하는 경우에만 .svg 참조를 .png로 병렬 치환
+      - name: Rewrite SVG refs to PNG where PNG exists (parallel)
         run: |
           set -Eeuo pipefail
           python3 - <<'PY'
           import os, re
+          from concurrent.futures import ProcessPoolExecutor, as_completed
+          from urllib.parse import urlparse
 
-          ROOT="www"
-          exts=(".js",".css",".html")
+          ROOT = "www"
+          exts = (".js", ".css", ".html")
 
-          # /lib/@entrylabs/entry/images/...*.svg  -> *.png
-          pat = re.compile(r'((?:http?://[^"\')\s]+/)?(?:/|\./|\.\./)?(?:lib/@entrylabs/entry/images|images)/[A-Za-z0-9_\-./]+)\.svg(\b|[?#"\'\)\s])')
+          # 매치 예:
+          #  - /images/.../a.svg
+          #  - ./images/.../a.svg
+          #  - /lib/@entrylabs/entry/images/.../a.svg
+          #  - http://localhost/lib/@entrylabs/entry/images/.../a.svg
+          pat = re.compile(
+              r'((?:http?://[^"\'\)\s]+)?'                # optional scheme+host
+              r'(?:/|\./|\.\./)?'                          # optional leading
+              r'(?:lib/@entrylabs/entry/images|images)/'    # base
+              r'[A-Za-z0-9_\-./]+?)'                        # path body (no ext)
+              r'\.svg'                                      # ext
+              r'(\b|[?#"\'\)\s])'                           # delimiter
+          )
 
-          changed=0
-          files=0
-          for dp,_,fns in os.walk(ROOT):
-            for fn in fns:
-              if not fn.endswith(exts): 
-                continue
-              p=os.path.join(dp,fn)
-              s=open(p,"rb").read().decode("utf-8","ignore")
-              ns, n = pat.subn(r'\1.png\2', s)
-              if n:
-                open(p,"wb").write(ns.encode("utf-8"))
-                changed += n
-                files += 1
+          def norm_to_fs(path_with_opt_url: str) -> str:
+              # URL이면 path만 뽑고, 앞의 / ./ ../ 제거해서 ROOT 기준 상대경로로
+              if path_with_opt_url.startswith("http://") or path_with_opt_url.startswith("https://"):
+                  p = urlparse(path_with_opt_url).path
+              else:
+                  p = path_with_opt_url
+              p = p.replace("\\", "/")
+              while p.startswith("../"):
+                  p = p[3:]
+              if p.startswith("./"):
+                  p = p[2:]
+              if p.startswith("/"):
+                  p = p[1:]
+              return p
 
-          print(f"[rewrite-entry-svg] files_changed={files} refs_changed={changed}")
-          PY
-      - name: Rewrite SVG references to PNG (Android WebView)
-        run: |
-          set -Eeuo pipefail
-
-          # 1) 대상: www 전체 JS/CSS/HTML 안에서
-          #    "/lib/@entrylabs/entry/images/...*.svg" 또는 "/images/...*.svg" 를 *.png로 치환
-          #    (따옴표/괄호/공백/쿼리스트링 케이스까지 최소 범위로 안전하게)
-          python3 - <<'PY'
-          import os, re
-
-          ROOT="www"
-          exts=(".js",".css",".html")
-
-          # /lib/@entrylabs/entry/images/...svg  또는 /images/...svg  (상대경로 포함)
-          pat = re.compile(r'((?:/|\./|\.\./)?(?:lib/@entrylabs/entry/images|images)/[A-Za-z0-9_\-./]+)\.svg(\b|[?#"\'\)\s])')
-
-          changed=0
-          files=0
-
-          for dp,_,fns in os.walk(ROOT):
-            for fn in fns:
-              if not fn.endswith(exts): 
-                continue
-              p=os.path.join(dp,fn)
+          def process_file(fp: str):
               try:
-                s=open(p,"rb").read().decode("utf-8","ignore")
+                  raw = open(fp, "rb").read()
               except:
-                continue
+                  return (fp, 0, 0)
 
-              ns, n = pat.subn(r'\1.png\2', s)
-              if n:
-                open(p,"wb").write(ns.encode("utf-8"))
-                changed += n
-                files += 1
+              s = raw.decode("utf-8", "ignore")
+              changed = 0
+              scanned = 0
 
-          print(f"[rewrite-svg] files_changed={files} refs_changed={changed}")
+              def repl(m):
+                  nonlocal changed, scanned
+                  scanned += 1
+                  base = m.group(1)
+                  tail = m.group(2)
+
+                  fs_rel = norm_to_fs(base)  # e.g. images/a/b or lib/@entrylabs/entry/images/media/entrybot1
+                  png_path = os.path.join(ROOT, fs_rel + ".png")
+                  if os.path.exists(png_path):
+                      changed += 1
+                      return base + ".png" + tail
+                  else:
+                      return m.group(0)  # 그대로 유지
+
+              ns, _ = pat.subn(repl, s)
+              if changed:
+                  open(fp, "wb").write(ns.encode("utf-8"))
+              return (fp, scanned, changed)
+
+          # 대상 파일 수집
+          files = []
+          for dp, _, fns in os.walk(ROOT):
+              for fn in fns:
+                  if fn.endswith(exts):
+                      files.append(os.path.join(dp, fn))
+
+          total_scanned = 0
+          total_changed = 0
+          touched_files = 0
+
+          # 병렬 처리
+          workers = min(12, (os.cpu_count() or 4))
+          with ProcessPoolExecutor(max_workers=workers) as ex:
+              futs = [ex.submit(process_file, f) for f in files]
+              for fut in as_completed(futs):
+                  fp, scanned, changed = fut.result()
+                  total_scanned += scanned
+                  total_changed += changed
+                  if changed:
+                      touched_files += 1
+
+          print(f"[rewrite-svg->png] files={len(files)} touched={touched_files} scanned={total_scanned} changed={total_changed} workers={workers}")
           PY
-      - name: Fix @entrvlabs typo paths and add alias folder
-        run: |
-          set -Eeuo pipefail
 
-          # 1) 코드 안의 "@entrvlabs" 오타를 "@entrylabs"로 치환
-          python3 - <<'PY'
-          import os, re
-
-          ROOT="www"
-          exts=(".js",".css",".html")
-
-          pat = re.compile(r'@entrvlabs')
-          files=0
-          reps=0
-
-          for dp,_,fns in os.walk(ROOT):
-            for fn in fns:
-              if not fn.endswith(exts):
-                continue
-              p=os.path.join(dp,fn)
-              s=open(p,"rb").read().decode("utf-8","ignore")
-              ns, n = pat.subn("@entrylabs", s)
-              if n:
-                open(p,"wb").write(ns.encode("utf-8"))
-                files += 1
-                reps += n
-
-          print(f"[fix-entrvlabs] files_changed={files} replacements={reps}")
-          PY
-
-          # 2) 혹시 런타임에서 이미 @entrvlabs로 요청하는 코드가 남아있어도 살게 alias 폴더 복사
-          #    (Android assets는 symlink가 안전하지 않으니 복사)
-          if [ -d "www/lib/@entrylabs" ]; then
-            mkdir -p "www/lib/@entrvlabs"
-            rm -rf "www/lib/@entrvlabs/entry" || true
-            cp -a "www/lib/@entrylabs/entry" "www/lib/@entrvlabs/entry"
-            echo "ALIASED: www/lib/@entrvlabs/entry -> copy of @entrylabs/entry"
-          fi
-
-          # 3) 최종 존재 확인(이게 OK면 localhost로도 떠야 함)
-          test -f "www/lib/@entrylabs/entry/images/media/entrybot1.png" || true
-          test -f "www/lib/@entrvlabs/entry/images/media/entrybot1.png" || true
-
-      # ✅✅✅✅✅ (추가만) PNG 재인코딩 (Android WebView broken image 방지)
+      # ✅✅✅✅✅ (추가만) PNG 재인코딩 (Android WebView broken image 방지) - 깨진 PNG는 스킵
       - name: Re-encode ALL PNGs for Android WebView
         run: |
           set -Eeuo pipefail
@@ -461,7 +415,6 @@ jobs:
               continue
             fi
 
-            # 깨진 PNG 만나도 전체 실패하지 않게 스킵 처리
             convert "$f" -strip -define png:color-type=6 -define png:bit-depth=8 PNG32:"$f".tmp 2>/dev/null || {
               echo "SKIP (broken): $f"
               rm -f "$f".tmp || true
