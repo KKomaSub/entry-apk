@@ -180,19 +180,17 @@ jobs:
 
           ROOT = "www"
 
-          # 1) www/images 실제 파일 인덱스(소문자 키)
           img_root = os.path.join(ROOT, "images")
           img_index = {}
           if os.path.isdir(img_root):
             for dirpath, _, filenames in os.walk(img_root):
               for fn in filenames:
                 rel = os.path.relpath(os.path.join(dirpath, fn), ROOT).replace("\\", "/")
-                img_index[rel.lower()] = rel  # 실제 경로(정확한 대소문자)
+                img_index[rel.lower()] = rel
           else:
             print("[fix-images] no www/images folder; skip")
             raise SystemExit(0)
 
-          # 2) 번들/HTML/CSS에서 images 경로 수집
           pat = re.compile(r'(?:(?:/|\.{0,2}/)images/)[A-Za-z0-9_\-./]+')
           refs = set()
 
@@ -208,11 +206,10 @@ jobs:
               s = data.decode("utf-8", "ignore")
               for m in pat.findall(s):
                 u = m.replace("\\", "/")
-                u = re.sub(r'^(?:/|\./|\.\./)+', '', u)  # leading / ./ ../ 제거
+                u = re.sub(r'^(?:/|\./|\.\./)+', '', u)
                 if u.startswith("images/"):
                   refs.add(u)
 
-          # 3) refs 중 실제 파일이 없는 것들 -> 대소문자 무시 매칭해서 복사 생성
           made = 0
           missing = 0
           for ref in sorted(refs):
@@ -230,7 +227,6 @@ jobs:
 
           print(f"[fix-images] refs={len(refs)} made={made} still-missing={missing}")
 
-          # 4) 레거시 alias: images/icon/** 채움
           icon_dir = os.path.join(ROOT, "images", "icon")
           os.makedirs(icon_dir, exist_ok=True)
 
@@ -249,7 +245,6 @@ jobs:
           set -Eeuo pipefail
           sudo apt-get update -y
           sudo apt-get install -y librsvg2-bin
-          # block_icon 폴더의 svg를 png로 변환(같은 이름.png 생성)
           if [ -d "www/images/block_icon" ]; then
             find www/images/block_icon -type f -name '*.svg' -print0 | while IFS= read -r -d '' f; do
               out="${f%.svg}.png"
@@ -258,7 +253,6 @@ jobs:
               fi
             done
           fi
-          # 레거시 alias쪽도 동일
           if [ -d "www/images/icon/block_icon" ]; then
             find www/images/icon/block_icon -type f -name '*.svg' -print0 | while IFS= read -r -d '' f; do
               out="${f%.svg}.png"
@@ -270,31 +264,25 @@ jobs:
           echo "PNG fallback count:"
           find www/images -type f -name '*.png' | wc -l || true
 
-      # ✅✅✅ (추가만) Convert SVG icons to PNG (for Android Canvas)
       - name: Convert SVG icons to PNG (for Android Canvas)
         run: |
           set -Eeuo pipefail
           sudo apt-get update -y
           sudo apt-get install -y librsvg2-bin
-
-          # images 아래 모든 svg를 동일 경로에 png로 생성 (기존 png 있으면 스킵)
           find www/images -type f -name "*.svg" -print0 | while IFS= read -r -d '' f; do
             out="${f%.svg}.png"
             if [ ! -f "$out" ]; then
               rsvg-convert "$f" -o "$out" || true
             fi
           done
-
           echo "SVG count:"; find www/images -type f -name "*.svg" | wc -l || true
           echo "PNG count:"; find www/images -type f -name "*.png" | wc -l || true
 
-      # ✅✅✅✅ (추가만) @entrylabs/entry 내부 SVG도 PNG로 변환
       - name: Convert @entrylabs entry SVG to PNG (for Android Canvas)
         run: |
           set -Eeuo pipefail
           sudo apt-get update -y
           sudo apt-get install -y librsvg2-bin
-
           if [ -d "www/lib/@entrylabs/entry/images" ]; then
             find "www/lib/@entrylabs/entry/images" -type f -name "*.svg" -print0 | while IFS= read -r -d '' f; do
               out="${f%.svg}.png"
@@ -303,9 +291,41 @@ jobs:
               fi
             done
           fi
-
           echo "entry lib SVG count:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.svg" | wc -l || true
           echo "entry lib PNG count:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.png" | wc -l || true
+
+      # ✅✅✅✅✅ (추가) 아이콘/미디어 PNG가 너무 큰 경우만 자동 축소(크게 보임 방지)
+      - name: Normalize oversized PNG dimensions (only shrink)
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y imagemagick
+
+          # 1) block_icon 계열: 128px 이상은 128로 축소 (큰 것만)
+          for d in \
+            "www/images/block_icon" \
+            "www/images/icon/block_icon" \
+            "www/lib/@entrylabs/entry/images/block_icon" \
+            "www/lib/@entrylabs/entry/images/icon/block_icon"
+          do
+            if [ -d "$d" ]; then
+              find "$d" -type f -name "*.png" -print0 | while IFS= read -r -d '' f; do
+                mogrify -resize 128x128\> "$f" 2>/dev/null || true
+              done
+            fi
+          done
+
+          # 2) media(캐릭터/로고 등): 512px 이상은 512로 축소 (큰 것만)
+          for d in \
+            "www/lib/@entrylabs/entry/images/media" \
+            "www/lib/entry-js/images"
+          do
+            if [ -d "$d" ]; then
+              find "$d" -type f -name "*.png" -print0 | while IFS= read -r -d '' f; do
+                mogrify -resize 512x512\> "$f" 2>/dev/null || true
+              done
+            fi
+          done
 
       # ✅✅✅✅✅ (핵심) PNG가 실제 존재하는 경우에만 .svg 참조를 .png로 병렬 치환
       - name: Rewrite SVG refs to PNG where PNG exists (parallel)
@@ -319,22 +339,16 @@ jobs:
           ROOT = "www"
           exts = (".js", ".css", ".html")
 
-          # 매치 예:
-          #  - /images/.../a.svg
-          #  - ./images/.../a.svg
-          #  - /lib/@entrylabs/entry/images/.../a.svg
-          #  - http://localhost/lib/@entrylabs/entry/images/.../a.svg
           pat = re.compile(
-              r'((?:http?://[^"\'\)\s]+)?'                # optional scheme+host
-              r'(?:/|\./|\.\./)?'                          # optional leading
-              r'(?:lib/@entrylabs/entry/images|images)/'    # base
-              r'[A-Za-z0-9_\-./]+?)'                        # path body (no ext)
-              r'\.svg'                                      # ext
-              r'(\b|[?#"\'\)\s])'                           # delimiter
+              r'((?:https?://[^"\'\)\s]+)?'
+              r'(?:/|\./|\.\./)?'
+              r'(?:lib/@entrylabs/entry/images|images)/'
+              r'[A-Za-z0-9_\-./]+?)'
+              r'\.svg'
+              r'(\b|[?#"\'\)\s])'
           )
 
           def norm_to_fs(path_with_opt_url: str) -> str:
-              # URL이면 path만 뽑고, 앞의 / ./ ../ 제거해서 ROOT 기준 상대경로로
               if path_with_opt_url.startswith("http://") or path_with_opt_url.startswith("https://"):
                   p = urlparse(path_with_opt_url).path
               else:
@@ -364,20 +378,18 @@ jobs:
                   base = m.group(1)
                   tail = m.group(2)
 
-                  fs_rel = norm_to_fs(base)  # e.g. images/a/b or lib/@entrylabs/entry/images/media/entrybot1
+                  fs_rel = norm_to_fs(base)
                   png_path = os.path.join(ROOT, fs_rel + ".png")
                   if os.path.exists(png_path):
                       changed += 1
                       return base + ".png" + tail
-                  else:
-                      return m.group(0)  # 그대로 유지
+                  return m.group(0)
 
               ns, _ = pat.subn(repl, s)
               if changed:
                   open(fp, "wb").write(ns.encode("utf-8"))
               return (fp, scanned, changed)
 
-          # 대상 파일 수집
           files = []
           for dp, _, fns in os.walk(ROOT):
               for fn in fns:
@@ -388,7 +400,6 @@ jobs:
           total_changed = 0
           touched_files = 0
 
-          # 병렬 처리
           workers = min(12, (os.cpu_count() or 4))
           with ProcessPoolExecutor(max_workers=workers) as ex:
               futs = [ex.submit(process_file, f) for f in files]
@@ -402,7 +413,7 @@ jobs:
           print(f"[rewrite-svg->png] files={len(files)} touched={touched_files} scanned={total_scanned} changed={total_changed} workers={workers}")
           PY
 
-      # ✅✅✅✅✅ (추가만) PNG 재인코딩 (Android WebView broken image 방지) - 깨진 PNG는 스킵
+      # ✅✅✅✅✅ PNG 재인코딩 (Android WebView broken image 방지) - 깨진 PNG는 스킵
       - name: Re-encode ALL PNGs for Android WebView
         run: |
           set -Eeuo pipefail
@@ -423,6 +434,49 @@ jobs:
 
             mv "$f".tmp "$f"
           done
+      # ✅✅✅✅✅ (추가) PNG 디코딩 실패 파일 자동 복구: SVG 있으면 재생성, 없으면 1x1 투명으로 대체
+      - name: Repair broken PNGs (regen from SVG or replace)
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y imagemagick librsvg2-bin
+
+          repaired=0
+          replaced=0
+          checked=0
+
+          find www -type f -name "*.png" -print0 | while IFS= read -r -d '' f; do
+            checked=$((checked+1))
+
+            # identify로 디코딩 가능 여부 체크
+            if identify "$f" >/dev/null 2>&1; then
+              continue
+            fi
+
+            base="${f%.png}"
+            svg="$base.svg"
+
+            if [ -f "$svg" ]; then
+              # SVG가 있으면 PNG 재생성
+              rsvg-convert "$svg" -o "$f" >/dev/null 2>&1 || true
+              # 그래도 깨졌으면 1x1로 대체
+              if ! identify "$f" >/dev/null 2>&1; then
+                convert -size 1x1 xc:none "$f" >/dev/null 2>&1 || true
+                replaced=$((replaced+1))
+                echo "REPLACED(1x1): $f"
+              else
+                repaired=$((repaired+1))
+                echo "REPAIRED(from svg): $f"
+              fi
+            else
+              # SVG도 없으면 1x1 투명으로 대체
+              convert -size 1x1 xc:none "$f" >/dev/null 2>&1 || true
+              replaced=$((replaced+1))
+              echo "REPLACED(1x1): $f"
+            fi
+          done
+
+          echo "DONE repair-broken-png: checked=$checked repaired=$repaired replaced=$replaced"
 
       - name: Ensure Android platform
         run: |
@@ -459,7 +513,6 @@ jobs:
         run: |
           set -Eeuo pipefail
           cd android
-          # ✅ (수정) clean 제거: 매번 풀빌드 방지
           ./gradlew assembleDebug
 
       - name: Inspect APK contents (must include renderer_build + images)
@@ -478,16 +531,7 @@ jobs:
           unzip -l "$APK" | grep -F "assets/public/images/block_icon/ai_hand_icon.svg" || true
           echo "== test func_icon.svg =="
           unzip -l "$APK" | grep -F "assets/public/images/block_icon/func_icon.svg" || true
-          echo "== index.html contains AFTER TESTS? =="
-          unzip -p "$APK" assets/public/index.html | grep -n "AFTER TESTS" || true
 
-          echo "== index.html head (first 40 lines) =="
-          unzip -p "$APK" assets/public/index.html | head -n 40
-
-          echo "== index.html contains bootLineImpl? =="
-          unzip -p "$APK" assets/public/index.html | grep -n "bootLineImpl" || true
-          echo "== index.html contains AFTER TESTS? =="
-          unzip -p "$APK" assets/public/index.html | grep -n "AFTER TESTS" || true
           echo "== entrybot1 png in apk =="
           unzip -l "$APK" | grep -F "assets/public/lib/@entrylabs/entry/images/media/entrybot1.png" || true
           echo "== entrybot1 svg/png in apk =="
