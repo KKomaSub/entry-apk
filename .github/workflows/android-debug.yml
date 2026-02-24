@@ -405,6 +405,48 @@ jobs:
 
           print(f"[rewrite-svg] files_changed={files} refs_changed={changed}")
           PY
+      - name: Fix @entrvlabs typo paths and add alias folder
+        run: |
+          set -Eeuo pipefail
+
+          # 1) 코드 안의 "@entrvlabs" 오타를 "@entrylabs"로 치환
+          python3 - <<'PY'
+          import os, re
+
+          ROOT="www"
+          exts=(".js",".css",".html")
+
+          pat = re.compile(r'@entrvlabs')
+          files=0
+          reps=0
+
+          for dp,_,fns in os.walk(ROOT):
+            for fn in fns:
+              if not fn.endswith(exts):
+                continue
+              p=os.path.join(dp,fn)
+              s=open(p,"rb").read().decode("utf-8","ignore")
+              ns, n = pat.subn("@entrylabs", s)
+              if n:
+                open(p,"wb").write(ns.encode("utf-8"))
+                files += 1
+                reps += n
+
+          print(f"[fix-entrvlabs] files_changed={files} replacements={reps}")
+          PY
+
+          # 2) 혹시 런타임에서 이미 @entrvlabs로 요청하는 코드가 남아있어도 살게 alias 폴더 복사
+          #    (Android assets는 symlink가 안전하지 않으니 복사)
+          if [ -d "www/lib/@entrylabs" ]; then
+            mkdir -p "www/lib/@entrvlabs"
+            rm -rf "www/lib/@entrvlabs/entry" || true
+            cp -a "www/lib/@entrylabs/entry" "www/lib/@entrvlabs/entry"
+            echo "ALIASED: www/lib/@entrvlabs/entry -> copy of @entrylabs/entry"
+          fi
+
+          # 3) 최종 존재 확인(이게 OK면 localhost로도 떠야 함)
+          test -f "www/lib/@entrylabs/entry/images/media/entrybot1.png" || true
+          test -f "www/lib/@entrvlabs/entry/images/media/entrybot1.png" || true
 
       # ✅✅✅✅✅ (추가만) PNG 재인코딩 (Android WebView broken image 방지)
       - name: Re-encode ALL PNGs for Android WebView
@@ -414,7 +456,18 @@ jobs:
           sudo apt-get install -y imagemagick
 
           find www -type f -name "*.png" -print0 | while IFS= read -r -d '' f; do
-            convert "$f" -strip -define png:color-type=6 -define png:bit-depth=8 PNG32:"$f".tmp
+            if [ ! -s "$f" ]; then
+              echo "SKIP (empty): $f"
+              continue
+            fi
+
+            # 깨진 PNG 만나도 전체 실패하지 않게 스킵 처리
+            convert "$f" -strip -define png:color-type=6 -define png:bit-depth=8 PNG32:"$f".tmp 2>/dev/null || {
+              echo "SKIP (broken): $f"
+              rm -f "$f".tmp || true
+              continue
+            }
+
             mv "$f".tmp "$f"
           done
 
