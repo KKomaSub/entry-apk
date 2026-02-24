@@ -350,7 +350,7 @@ jobs:
           exts=(".js",".css",".html")
 
           # /lib/@entrylabs/entry/images/...*.svg  -> *.png
-          pat = re.compile(r'((?:https?://[^"\')\s]+/)?(?:/|\./|\.\./)?(?:lib/@entrylabs/entry/images|images)/[A-Za-z0-9_\-./]+)\.svg(\b|[?#"\'\)\s])')
+          pat = re.compile(r'((?:http?://[^"\')\s]+/)?(?:/|\./|\.\./)?(?:lib/@entrylabs/entry/images|images)/[A-Za-z0-9_\-./]+)\.svg(\b|[?#"\'\)\s])')
 
           changed=0
           files=0
@@ -405,6 +405,18 @@ jobs:
 
           print(f"[rewrite-svg] files_changed={files} refs_changed={changed}")
           PY
+
+      # ✅✅✅✅✅ (추가만) PNG 재인코딩 (Android WebView broken image 방지)
+      - name: Re-encode ALL PNGs for Android WebView
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y imagemagick
+
+          find www -type f -name "*.png" -print0 | while IFS= read -r -d '' f; do
+            convert "$f" -strip -define png:color-type=6 -define png:bit-depth=8 PNG32:"$f".tmp
+            mv "$f".tmp "$f"
+          done
 
       - name: Ensure Android platform
         run: |
