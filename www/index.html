@@ -34,11 +34,69 @@ window.bootLine = bootLineImpl;
 window.__bootLine = bootLineImpl;
 window.__bootline = bootLineImpl;
 </script>
+<script>
+/* ✅ FIX: broken 이미지 drawImage 예외를 삼켜서 렌더 루프가 죽지 않게 */
+if (!window.__DRAWIMAGE_GUARD__) {
+  window.__DRAWIMAGE_GUARD__ = true;
 
+  const proto = CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
+  if (proto && proto.drawImage) {
+    const _drawImage = proto.drawImage;
+    proto.drawImage = function(img, ...rest) {
+      // broken 이미지면 그냥 스킵
+      try {
+        if (img && img.tagName === "IMG") {
+          const nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
+          if (nw === 0 || nh === 0) {
+            // 로그 원하면 아래 한 줄만 켜기
+            // if (window.bootLine) bootLine("SKIP broken IMG: " + img.src, "dim");
+            return;
+          }
+        }
+        return _drawImage.call(this, img, ...rest);
+      } catch (e) {
+        // 여기서 죽으면 Entry 전체 UI가 망가짐 → 무조건 삼킴
+        // if (window.bootLine) bootLine("drawImage error swallowed: " + e, "bad");
+        return;
+      }
+    };
+  }
+}
+</script>
 <script>
   // ✅ (수정) 중복 function bootLine(...) 삭제 대신, 기존 호출 호환용 alias 1줄만 유지
   const bootLine = (...args) => window.bootLine(...args);
+async function testImageDecode(url, timeoutMs = 4000) {
+  bootLine(`IMG start ${url}`, "dim");
+  return await new Promise((resolve) => {
+    const img = new Image();
+    let done = false;
 
+    const t = setTimeout(() => {
+      if (done) return;
+      done = true;
+      bootLine(`IMG timeout ${url}`, "bad");
+      resolve(false);
+    }, timeoutMs);
+
+    img.onload = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(t);
+      bootLine(`IMG ok ${url} natural=${img.naturalWidth}x${img.naturalHeight}`, "ok");
+      resolve(img.naturalWidth > 0 && img.naturalHeight > 0);
+    };
+    img.onerror = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(t);
+      bootLine(`IMG fail ${url}`, "bad");
+      resolve(false);
+    };
+
+    img.src = url + (url.includes("?") ? "&" : "?") + "t=" + Date.now();
+  });
+}
 async function testAsset(url, timeoutMs = 1500) {
   bootLine(`TEST start ${url}`, "dim");
 
@@ -330,6 +388,7 @@ const fix = (u) => {
 await testAsset(BASE + "images/_1x1.png", 1500);
 await testAsset(BASE + "images/block_icon/ai_hand_icon.svg", 1500);
   await testAsset(BASE + "images/block_icon/ai_hand_icon.png", 1500);
+  await testImageDecode(BASE + "images/block_icon/ai_hand_icon.png");
 // ✅ 여기부터는 반드시 찍혀야 정상
 bootLine("AFTER TESTS", "ok");
 
