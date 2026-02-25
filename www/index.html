@@ -18,465 +18,329 @@
     .ok{color:#66ff66}
   </style>
 
-<script>
-function bootLineImpl(t, cls="") {
-  const el = document.getElementById("boot");
-  if (!el) return;
-  const d = document.createElement("div");
-  if (cls) d.className = cls;
-  d.textContent = t;
-  el.appendChild(d);
-  el.scrollTop = el.scrollHeight;
-}
+  <script>
+    function bootLineImpl(t, cls="") {
+      const el = document.getElementById("boot");
+      if (!el) return;
+      const d = document.createElement("div");
+      if (cls) d.className = cls;
+      d.textContent = t;
+      el.appendChild(d);
+      el.scrollTop = el.scrollHeight;
+    }
 
-// ✅ 전역 함수로 “고정”
-window.bootLine = bootLineImpl;
-window.__bootLine = bootLineImpl;
-window.__bootline = bootLineImpl;
-</script>
-<script>
-/* ✅ FIX: broken 이미지 drawImage 예외를 삼켜서 렌더 루프가 죽지 않게 */
-if (!window.__DRAWIMAGE_GUARD__) {
-  window.__DRAWIMAGE_GUARD__ = true;
+    // ✅ 전역 함수로 고정
+    window.bootLine = bootLineImpl;
+    window.__bootLine = bootLineImpl;
+    window.__bootline = bootLineImpl;
+  </script>
 
-  const proto = CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
-  if (proto && proto.drawImage) {
-    const _drawImage = proto.drawImage;
-    proto.drawImage = function(img, ...rest) {
-      // broken 이미지면 그냥 스킵
-      try {
-        if (img && img.tagName === "IMG") {
-          const nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
-          if (nw === 0 || nh === 0) {
-            // 로그 원하면 아래 한 줄만 켜기
-            // if (window.bootLine) bootLine("SKIP broken IMG: " + img.src, "dim");
-            return;
+  <script>
+    /* ✅ FIX: broken 이미지 drawImage 예외를 삼켜서 렌더 루프가 죽지 않게 */
+    if (!window.__DRAWIMAGE_GUARD__) {
+      window.__DRAWIMAGE_GUARD__ = true;
+
+      const proto = CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
+      if (proto && proto.drawImage) {
+        const _drawImage = proto.drawImage;
+        proto.drawImage = function(img, ...rest) {
+          try {
+            if (img && img.tagName === "IMG") {
+              const nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
+              if (nw === 0 || nh === 0) return; // broken이면 스킵
+            }
+            return _drawImage.call(this, img, ...rest);
+          } catch (_) {
+            return; // 무조건 삼킴
           }
-        }
-        return _drawImage.call(this, img, ...rest);
-      } catch (e) {
-        // 여기서 죽으면 Entry 전체 UI가 망가짐 → 무조건 삼킴
-        // if (window.bootLine) bootLine("drawImage error swallowed: " + e, "bad");
-        return;
-      }
-    };
-  }
-}
-</script>
-<script>
-  // ✅ (수정) 중복 function bootLine(...) 삭제 대신, 기존 호출 호환용 alias 1줄만 유지
-  const bootLine = (...args) => window.bootLine(...args);
-async function testImageDecode(url, timeoutMs = 4000) {
-  bootLine(`IMG start ${url}`, "dim");
-  return await new Promise((resolve) => {
-    const img = new Image();
-    let done = false;
-
-    const t = setTimeout(() => {
-      if (done) return;
-      done = true;
-      bootLine(`IMG timeout ${url}`, "bad");
-      resolve(false);
-    }, timeoutMs);
-
-    img.onload = () => {
-      if (done) return;
-      done = true;
-      clearTimeout(t);
-      bootLine(`IMG ok ${url} natural=${img.naturalWidth}x${img.naturalHeight}`, "ok");
-      resolve(img.naturalWidth > 0 && img.naturalHeight > 0);
-    };
-    img.onerror = () => {
-      if (done) return;
-      done = true;
-      clearTimeout(t);
-      bootLine(`IMG fail ${url}`, "bad");
-      resolve(false);
-    };
-
-    img.src = url + (url.includes("?") ? "&" : "?") + "t=" + Date.now();
-  });
-}
-async function testAsset(url, timeoutMs = 1500) {
-  bootLine(`TEST start ${url}`, "dim");
-
-  const timeout = new Promise((resolve) =>
-    setTimeout(() => resolve({ timeout: true }), timeoutMs)
-  );
-
-  const req = fetch(url, { cache: "no-store" })
-    .then((r) => ({ r }))
-    .catch((e) => ({ e }));
-
-  const out = await Promise.race([req, timeout]);
-
-  if (out.timeout) {
-    bootLine(`TEST timeout ${url} (${timeoutMs}ms)`, "bad");
-    return false;
-  }
-  if (out.e) {
-    bootLine(`TEST fail ${url} -> ${String(out.e && out.e.name ? out.e.name : out.e)}`, "bad");
-    return false;
-  }
-
-  const r = out.r;
-  const ct = r.headers.get("content-type");
-  bootLine(`TEST done  ${url} -> ${r.status} ct=${ct}`, r.ok ? "ok" : "bad");
-  return r.ok;
-}
-
-window.onerror = function (m, s, l, c, e) {
-  bootLine("JS ERROR:", "bad");
-  bootLine(String(e && e.stack ? e.stack : m), "bad");
-};
-
-async function probeBase(prefix) {
-  const url = prefix + "lib/lodash/dist/lodash.min.js";
-  try {
-    const r = await fetch(url, { method: "GET", cache: "no-store" });
-    return r.ok;
-  } catch (_) {
-    return false;
-  }
-}
-
-function loadJS(src) {
-  return new Promise((resolve) => {
-    const s = document.createElement("script");
-    s.src = src;
-    s.onload = () => resolve({ ok: true, src });
-    s.onerror = () => resolve({ ok: false, src });
-    document.head.appendChild(s);
-  });
-}
-
-function loadCSS(href) {
-  return new Promise((resolve) => {
-    const l = document.createElement("link");
-    l.rel = "stylesheet";
-    l.href = href;
-    l.onload = () => resolve({ ok: true, href });
-    l.onerror = () => resolve({ ok: false, href });
-    document.head.appendChild(l);
-  });
-}
-function hideBootLater(delayMs = 1500) {
-  setTimeout(() => {
-    const el = document.getElementById("boot");
-    if (el) el.remove();
-  }, delayMs);
-}
-function must(cond, msg){
-  if(!cond) throw new Error(msg);
-  bootLine("OK   " + msg, "ok");
-}
-
-async function boot() {
-  const candidates = ["./", "/", "/public/", "/www/"];
-  let BASE = "./";
-  for (const c of candidates) {
-    bootLine("PROBE BASE: " + c, "dim");
-    if (await probeBase(c)) { BASE = c; break; }
-  }
-  bootLine("BASE = " + BASE, "ok");
-// ✅ FIX: Capacitor에서 /images/... 절대경로가 깨지는 경우 강제 변환
-if (!window.__PATH_PATCHED__) {
-  window.__PATH_PATCHED__ = true;
-
-  const fix = (u) => {
-  if (typeof u !== "string") return u;
-// ✅ entry. 경로 오타( entry./ )를 entry/ 로 보정
-u = u.replace("/lib/@entrylabs/entry./", "/lib/@entrylabs/entry/");
-
-// ✅ Android Canvas용: svg를 png로 강제 치환 (images, entry 이미지 모두)
-if (u.endsWith(".svg")) u = u.slice(0, -4) + ".png";
-  // ✅ 제일 먼저: entry. 오타 경로 교정
-  u = u.replace("/lib/@entrylabs/entry./", "/lib/@entrylabs/entry/");
-  u = u.replace("lib/@entrylabs/entry./", "lib/@entrylabs/entry/");
-// ✅ Canvas에서 깨지는 entrybot(media) SVG만 PNG로 대체
-if (u.includes("/images/media/") && u.toLowerCase().endsWith(".svg")) {
-  u = u.slice(0, -4) + ".png";
-}
-  // 기존 로직
-  if (u.startsWith("/images/")) return BASE + "images/" + u.slice("/images/".length);
-  if (u.startsWith("images/")) return BASE + u;
-
-  // (선택) svg→png 변환도 같이 쓰는 경우
-  if (u.includes("/images/") && u.endsWith(".svg")) u = u.replace(/\.svg$/i, ".png");
-
-  return u;
-};
-
-  // 1) fetch URL 변환
-  const _fetch = window.fetch.bind(window);
-  window.fetch = (input, init) => {
-    if (typeof input === "string")
-      return _fetch(fix(input), init);
-
-    if (input && typeof input.url === "string")
-      return _fetch(new Request(fix(input.url), input), init);
-
-    return _fetch(input, init);
-  };
-
-  // 2) Image.src 변환
-  const desc = Object.getOwnPropertyDescriptor(Image.prototype, "src");
-  if (desc && desc.set) {
-    Object.defineProperty(Image.prototype, "src", {
-      get: desc.get,
-      set(v) {
-        return desc.set.call(this, fix(v));
-      }
-    });
-  }
-
-  if (typeof bootLine === "function")
-    bootLine("PATCH path: /images/* -> " + BASE + "images/*", "dim");
-}
-  // CSS
-  const cssList = [
-    BASE + "lib/entry-tool/dist/entry-tool.css",
-    BASE + "lib/entryjs/dist/entry.css",
-    BASE + "lib/codemirror/codemirror.css",
-    BASE + "overrides.css",
-  ];
-  for (const href of cssList) {
-    const r = await loadCSS(href);
-    bootLine((r.ok ? "OK   CSS  " : "MISS CSS ") + href, r.ok ? "ok" : "bad");
-  }
-
-  // locales (optional)
-  {
-    const src = BASE + "js/ws/locales.js";
-    const r = await loadJS(src);
-    bootLine((r.ok ? "OK   JS   " : "MISS(opt) ") + src, r.ok ? "ok" : "dim");
-  }
-
-  // core libs
-  const jsList = [
-    BASE + "lib/lodash/dist/lodash.min.js",
-    BASE + "lib/jquery/jquery.min.js",
-    BASE + "lib/jquery-ui/ui/minified/jquery-ui.min.js",
-
-    BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
-    BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
-    BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
-
-    BASE + "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js", // optional
-
-    BASE + "lib/velocity/velocity.min.js",
-
-    BASE + "lib/codemirror/codemirror.js",
-    BASE + "lib/codemirror/vim.js", // optional
-
-    BASE + "lib/entry-tool/dist/entry-tool.js",
-
-    BASE + "lib/entryjs/extern/lang/ko.js",
-    BASE + "lib/entryjs/extern/util/static.js",
-    BASE + "lib/entryjs/extern/util/handle.js",
-    BASE + "lib/entryjs/extern/util/bignumber.min.js",
-    BASE + "lib/module/legacy-video/index.js",
-
-    // sound editor (optional) — 실패해도 계속
-    BASE + "lib/external/sound/sound-editor.js",
-
-    // entry core
-    BASE + "lib/entryjs/dist/entry.min.js",
-
-    // paint
-    BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
-  ];
-
-  for (const src of jsList) {
-    const optional =
-      src.includes("flashaudioplugin") ||
-      src.includes("/vim.js") ||
-      src.includes("/ws/locales.js") ||
-      src.includes("/external/sound/sound-editor.js");
-
-    const r = await loadJS(src);
-
-    // ✅ sound-editor.js가 실패하면 EntrySoundEditor 스텁 주입 (entry.min.js 크래시 방지)
-    if (!r.ok && src.includes("/external/sound/sound-editor.js")) {
-      bootLine("MISS(opt) " + src, "dim");
-      bootLine("PATCH EntrySoundEditor: stub applied (sound editor disabled)", "dim");
-      if (!window.EntrySoundEditor) {
-        window.EntrySoundEditor = {
-          renderSoundEditor: function () { /* no-op */ },
-          registExportFunction: function () { /* no-op */ },
-          registImportFunction: function () { /* no-op */ },
-          init: function () { /* no-op */ },
         };
       }
-      continue;
+    }
+  </script>
+
+  <script>
+    // 기존 호출 호환용 alias
+    const bootLine = (...args) => window.bootLine(...args);
+
+    async function testImageDecode(url, timeoutMs = 4000) {
+      bootLine(`IMG start ${url}`, "dim");
+      return await new Promise((resolve) => {
+        const img = new Image();
+        let done = false;
+
+        const t = setTimeout(() => {
+          if (done) return;
+          done = true;
+          bootLine(`IMG timeout ${url}`, "bad");
+          resolve(false);
+        }, timeoutMs);
+
+        img.onload = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(t);
+          bootLine(`IMG ok ${url} natural=${img.naturalWidth}x${img.naturalHeight}`, "ok");
+          resolve(img.naturalWidth > 0 && img.naturalHeight > 0);
+        };
+        img.onerror = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(t);
+          bootLine(`IMG fail ${url}`, "bad");
+          resolve(false);
+        };
+
+        img.src = url + (url.includes("?") ? "&" : "?") + "t=" + Date.now();
+      });
     }
 
-    bootLine(
-      (r.ok ? "OK   JS   " : (optional ? "MISS(opt) " : "MISS     ")) + src,
-      r.ok ? "ok" : (optional ? "dim" : "bad")
-    );
-  }
+    async function testAsset(url, timeoutMs = 1500) {
+      bootLine(`TEST start ${url}`, "dim");
 
-  // lodash 패치 (구버전 호환)
-  if (window._) {
-    if (typeof _.contains !== "function" && typeof _.includes === "function") _.contains = _.includes;
-    if (typeof _.findWhere !== "function") {
-      _.findWhere = function (arr, attrs) {
-        return _.find(arr, function (o) {
-          for (var k in attrs) if (o[k] !== attrs[k]) return false;
-          return true;
-        });
-      };
-    }
-    bootLine("PATCH lodash: _.contains/_.findWhere ok", "dim");
-  }
+      const timeout = new Promise((resolve) =>
+        setTimeout(() => resolve({ timeout: true }), timeoutMs)
+      );
 
-  // EntryStatic path local
-  if (window.EntryStatic) {
-    EntryStatic.imagePath = BASE + "images/";
-    EntryStatic.mediaPath = BASE + "media/";
-    EntryStatic.uploadPath = BASE + "uploads/";
-  }
-  bootLine("HREF = " + location.href);
-// ✅ /images/ 로 나가는 절대경로를 ./images/ 상대경로로 변환 (하위폴더 포함)
-(function patchImagesAbsPath(){
-const fix = (u) => {
-  if (typeof u !== "string") return u;
+      const req = fetch(url, { cache: "no-store" })
+        .then((r) => ({ r }))
+        .catch((e) => ({ e }));
 
-  // ✅ 제일 먼저: entry. 오타 경로 교정
-  u = u.replace("/lib/@entrylabs/entry./", "/lib/@entrylabs/entry/");
-  u = u.replace("lib/@entrylabs/entry./", "lib/@entrylabs/entry/");
+      const out = await Promise.race([req, timeout]);
 
-  // 기존 로직
-  if (u.startsWith("/images/")) return BASE + "images/" + u.slice("/images/".length);
-  if (u.startsWith("images/")) return BASE + u;
-
-  // (선택) svg→png 변환도 같이 쓰는 경우
-  if (u.includes("/images/") && u.endsWith(".svg")) u = u.replace(/\.svg$/i, ".png");
-
-  return u;
-};
-
-  // Image.src
-  const d = Object.getOwnPropertyDescriptor(Image.prototype, "src");
-  if (d && d.set) {
-    Object.defineProperty(Image.prototype, "src", {
-      get: d.get,
-      set(v) { return d.set.call(this, fix(v)); }
-    });
-  }
-
-  // XHR (createjs/preloadjs가 주로 씀)
-  const _open = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function(method, url, ...rest){
-    return _open.call(this, method, fix(url), ...rest);
-  };
-
-  // fetch (혹시 쓰는 경우)
-  if (window.fetch) {
-    const _fetch = window.fetch.bind(window);
-    window.fetch = (input, init) => {
-      if (typeof input === "string") return _fetch(fix(input), init);
-      if (input && typeof input.url === "string") return _fetch(fix(input.url), init);
-      return _fetch(input, init);
-    };
-  }
-})();
-  // ✅ (삭제) Image.prototype src 훅 1: 제거됨
-
-  // globals check
-await testAsset(BASE + "images/_1x1.png", 1500);
-await testAsset(BASE + "images/block_icon/ai_hand_icon.svg", 1500);
-  await testAsset(BASE + "images/block_icon/ai_hand_icon.png", 1500);
-  await testImageDecode(BASE + "images/block_icon/ai_hand_icon.png");
-// ✅ 여기부터는 반드시 찍혀야 정상
-bootLine("AFTER TESTS", "ok");
-
-  bootLine("_.memoize = " + (window._ ? typeof _.memoize : "N/A"), window._ ? "ok" : "bad");
-  bootLine("$.fn.jquery = " + (window.$ && $.fn ? $.fn.jquery : "N/A"), (window.$ && $.fn) ? "ok" : "bad");
-  bootLine("createjs = " + (typeof window.createjs), window.createjs ? "ok" : "bad");
-  bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
-  bootLine("EntryTool = " + (typeof window.EntryTool), window.EntryTool ? "ok" : "bad");
-  bootLine("EntryVideoLegacy = " + (typeof window.EntryVideoLegacy), window.EntryVideoLegacy ? "ok" : "bad");
-  bootLine("EntryStatic = " + (typeof window.EntryStatic), window.EntryStatic ? "ok" : "bad");
-  bootLine("EntrySoundEditor = " + (typeof window.EntrySoundEditor), window.EntrySoundEditor ? "ok" : "dim");
-  bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
-    (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
-
-  must(window._, "lodash(_)");
-  must(window.$, "jQuery($)");
-  must(window.createjs, "createjs");
-  must(window.Lang, "Lang");
-  must(window.EntryTool, "EntryTool");
-  must(window.EntryVideoLegacy, "EntryVideoLegacy");
-  must(window.EntryStatic, "EntryStatic");
-  must(window.EntrySoundEditor, "EntrySoundEditor (optional stub OK)");
-  must(window.Entry && typeof window.Entry.init === "function", "Entry.init");
-
-  bootLine("Starting Entry.init …", "dim");
-
-  // ✅ (삭제) Image.prototype src 훅 2/3: 제거됨
-if (!window.__TRACE_DRAWIMAGE__) {
-  window.__TRACE_DRAWIMAGE__ = true;
-
-  const proto = CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
-  if (proto && proto.drawImage) {
-
-    const _drawImage = proto.drawImage;
-
-    proto.drawImage = function (...args) {
-      const img = args[0];
-
-      try {
-        return _drawImage.apply(this, args);
-      } catch (e) {
-        try {
-          if (img && img.tagName === "IMG") {
-            if (typeof bootLine === "function") {
-              bootLine("BROKEN drawImage IMG.src = " + img.src, "bad");
-              bootLine(
-                "IMG.complete=" + img.complete +
-                " natural=" + img.naturalWidth + "x" + img.naturalHeight,
-                "bad"
-              );
-            }
-          } else {
-            if (typeof bootLine === "function") {
-              bootLine("drawImage error (non-IMG arg0)", "bad");
-            }
-          }
-        } catch (_) {}
-
-        throw e; // 무시하지 않고 그대로 던짐
+      if (out.timeout) {
+        bootLine(`TEST timeout ${url} (${timeoutMs}ms)`, "bad");
+        return false;
       }
+      if (out.e) {
+        bootLine(`TEST fail ${url} -> ${String(out.e && out.e.name ? out.e.name : out.e)}`, "bad");
+        return false;
+      }
+
+      const r = out.r;
+      const ct = r.headers.get("content-type");
+      bootLine(`TEST done  ${url} -> ${r.status} ct=${ct}`, r.ok ? "ok" : "bad");
+      return r.ok;
+    }
+
+    window.onerror = function (m, s, l, c, e) {
+      bootLine("JS ERROR:", "bad");
+      bootLine(String(e && e.stack ? e.stack : m), "bad");
     };
-  }
-}
-  Entry.init(document.getElementById("entryContainer"), {
-    type: "workspace",
-    libDir: "./lib",
-    textCodingEnable: true
-  });
 
-  Entry.loadProject();
-bootLine("BOOT OK: init+loadProject called, hiding logs…", "dim");
-hideBootLater(1500);   // 1.5초 뒤 제거 (원하면 500~3000ms 조절);
-}
+    async function probeBase(prefix) {
+      const url = prefix + "lib/lodash/dist/lodash.min.js";
+      try {
+        const r = await fetch(url, { method: "GET", cache: "no-store" });
+        return r.ok;
+      } catch (_) {
+        return false;
+      }
+    }
 
-document.addEventListener("DOMContentLoaded", () => {
-  // ✅ (삭제) Image.prototype src 훅 4: 제거됨
+    function loadJS(src) {
+      return new Promise((resolve) => {
+        const s = document.createElement("script");
+        s.src = src;
+        s.onload = () => resolve({ ok: true, src });
+        s.onerror = () => resolve({ ok: false, src });
+        document.head.appendChild(s);
+      });
+    }
 
-  boot().catch(e => {
-    bootLine("Boot Error", "bad");
-    bootLine(String(e && e.stack ? e.stack : e), "bad");
-  });
-});
-</script>
+    function loadCSS(href) {
+      return new Promise((resolve) => {
+        const l = document.createElement("link");
+        l.rel = "stylesheet";
+        l.href = href;
+        l.onload = () => resolve({ ok: true, href });
+        l.onerror = () => resolve({ ok: false, href });
+        document.head.appendChild(l);
+      });
+    }
+
+    function hideBootLater(delayMs = 1500) {
+      setTimeout(() => {
+        const el = document.getElementById("boot");
+        if (el) el.remove();
+      }, delayMs);
+    }
+
+    function must(cond, msg){
+      if(!cond) throw new Error(msg);
+      bootLine("OK   " + msg, "ok");
+    }
+
+    async function boot() {
+      // ✅ BASE 자동 탐지 유지
+      const candidates = ["./", "/", "/public/", "/www/"];
+      let BASE = "./";
+      for (const c of candidates) {
+        bootLine("PROBE BASE: " + c, "dim");
+        if (await probeBase(c)) { BASE = c; break; }
+      }
+      bootLine("BASE = " + BASE, "ok");
+
+      // CSS
+      const cssList = [
+        BASE + "lib/entry-tool/dist/entry-tool.css",
+        BASE + "lib/entryjs/dist/entry.css",
+        BASE + "lib/codemirror/codemirror.css",
+        BASE + "overrides.css",
+      ];
+      for (const href of cssList) {
+        const r = await loadCSS(href);
+        bootLine((r.ok ? "OK   CSS  " : "MISS CSS ") + href, r.ok ? "ok" : "bad");
+      }
+
+      // locales (optional)
+      {
+        const src = BASE + "js/ws/locales.js";
+        const r = await loadJS(src);
+        bootLine((r.ok ? "OK   JS   " : "MISS(opt) ") + src, r.ok ? "ok" : "dim");
+      }
+
+      // core libs
+      const jsList = [
+        BASE + "lib/lodash/dist/lodash.min.js",
+        BASE + "lib/jquery/jquery.min.js",
+        BASE + "lib/jquery-ui/ui/minified/jquery-ui.min.js",
+
+        BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
+        BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
+        BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
+        BASE + "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js", // optional
+
+        BASE + "lib/velocity/velocity.min.js",
+
+        BASE + "lib/codemirror/codemirror.js",
+        BASE + "lib/codemirror/vim.js", // optional
+
+        BASE + "lib/entry-tool/dist/entry-tool.js",
+
+        BASE + "lib/entryjs/extern/lang/ko.js",
+        BASE + "lib/entryjs/extern/util/static.js",
+        BASE + "lib/entryjs/extern/util/handle.js",
+        BASE + "lib/entryjs/extern/util/bignumber.min.js",
+        BASE + "lib/module/legacy-video/index.js",
+
+        // sound editor (optional)
+        BASE + "lib/external/sound/sound-editor.js",
+
+        // entry core
+        BASE + "lib/entryjs/dist/entry.min.js",
+
+        // paint
+        BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
+      ];
+
+      for (const src of jsList) {
+        const optional =
+          src.includes("flashaudioplugin") ||
+          src.includes("/vim.js") ||
+          src.includes("/ws/locales.js") ||
+          src.includes("/external/sound/sound-editor.js");
+
+        const r = await loadJS(src);
+
+        // sound-editor.js 실패 시 스텁
+        if (!r.ok && src.includes("/external/sound/sound-editor.js")) {
+          bootLine("MISS(opt) " + src, "dim");
+          bootLine("PATCH EntrySoundEditor: stub applied (sound editor disabled)", "dim");
+          if (!window.EntrySoundEditor) {
+            window.EntrySoundEditor = {
+              renderSoundEditor: function () {},
+              registExportFunction: function () {},
+              registImportFunction: function () {},
+              init: function () {},
+            };
+          }
+          continue;
+        }
+
+        bootLine(
+          (r.ok ? "OK   JS   " : (optional ? "MISS(opt) " : "MISS     ")) + src,
+          r.ok ? "ok" : (optional ? "dim" : "bad")
+        );
+      }
+
+      // lodash 패치(구버전 호환)
+      if (window._) {
+        if (typeof _.contains !== "function" && typeof _.includes === "function") _.contains = _.includes;
+        if (typeof _.findWhere !== "function") {
+          _.findWhere = function (arr, attrs) {
+            return _.find(arr, function (o) {
+              for (var k in attrs) if (o[k] !== attrs[k]) return false;
+              return true;
+            });
+          };
+        }
+        bootLine("PATCH lodash: _.contains/_.findWhere ok", "dim");
+      }
+
+      // EntryStatic path local (유지)
+      if (window.EntryStatic) {
+        EntryStatic.imagePath = BASE + "images/";
+        EntryStatic.mediaPath = BASE + "media/";
+        EntryStatic.uploadPath = BASE + "uploads/";
+      }
+
+      bootLine("HREF = " + location.href, "dim");
+
+      // ✅ 테스트는 png만
+      await testAsset(BASE + "images/_1x1.png", 1500);
+      await testAsset(BASE + "images/block_icon/ai_hand_icon.png", 1500);
+      await testImageDecode(BASE + "images/block_icon/ai_hand_icon.png");
+
+      bootLine("AFTER TESTS", "ok");
+
+      bootLine("_.memoize = " + (window._ ? typeof _.memoize : "N/A"), window._ ? "ok" : "bad");
+      bootLine("$.fn.jquery = " + (window.$ && $.fn ? $.fn.jquery : "N/A"), (window.$ && $.fn) ? "ok" : "bad");
+      bootLine("createjs = " + (typeof window.createjs), window.createjs ? "ok" : "bad");
+      bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
+      bootLine("EntryTool = " + (typeof window.EntryTool), window.EntryTool ? "ok" : "bad");
+      bootLine("EntryVideoLegacy = " + (typeof window.EntryVideoLegacy), window.EntryVideoLegacy ? "ok" : "bad");
+      bootLine("EntryStatic = " + (typeof window.EntryStatic), window.EntryStatic ? "ok" : "bad");
+      bootLine("EntrySoundEditor = " + (typeof window.EntrySoundEditor), window.EntrySoundEditor ? "ok" : "dim");
+      bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
+        (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
+
+      must(window._, "lodash(_)");
+      must(window.$, "jQuery($)");
+      must(window.createjs, "createjs");
+      must(window.Lang, "Lang");
+      must(window.EntryTool, "EntryTool");
+      must(window.EntryVideoLegacy, "EntryVideoLegacy");
+      must(window.EntryStatic, "EntryStatic");
+      must(window.EntrySoundEditor, "EntrySoundEditor (optional stub OK)");
+      must(window.Entry && typeof window.Entry.init === "function", "Entry.init");
+
+      bootLine("Starting Entry.init …", "dim");
+
+      Entry.init(document.getElementById("entryContainer"), {
+        type: "workspace",
+        libDir: "./lib",
+        textCodingEnable: true
+      });
+
+      Entry.loadProject();
+
+      bootLine("BOOT OK: init+loadProject called, hiding logs…", "dim");
+      hideBootLater(1500);
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      boot().catch(e => {
+        bootLine("Boot Error", "bad");
+        bootLine(String(e && e.stack ? e.stack : e), "bad");
+      });
+    });
+  </script>
 </head>
+
 <body>
   <div id="entryContainer"></div>
   <div id="boot">Entry Offline Editor
-Made by KKomaProgrammer 
+Made by KKomaProgrammer
 Loading…</div>
 </body>
 </html>
