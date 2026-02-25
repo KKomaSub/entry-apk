@@ -22,7 +22,6 @@ jobs:
         with:
           node-version: "18"
 
-      # ✅ (추가) Yarn/Gradle 캐시
       - name: Cache Yarn
         uses: actions/cache@v4
         with:
@@ -58,7 +57,6 @@ jobs:
           echo "== find main.html =="
           find entry-offline -type f -name "main.html" -print | head -n 50 || true
 
-      # ✅ 추가: Linux(case-sensitive)에서 ./components/Index import 깨지는 문제 자동 보정
       - name: Patch entry-offline import casing (Index -> index)
         run: |
           set -Eeuo pipefail
@@ -89,7 +87,6 @@ jobs:
           ls -la entry-offline/src/renderer/components | head -n 200 || true
           test ! -f entry-offline/src/renderer/components/Index.tsx || (echo "Index.tsx still exists" && exit 1)
 
-      # ✅ 추가: entry-offline renderer_build 실제 생성 (흰화면 방지의 핵심)
       - name: Build entry-offline renderer bundles
         run: |
           set -Eeuo pipefail
@@ -136,7 +133,6 @@ jobs:
           ls -la www | head -n 80 || true
           test -f www/index.html
 
-      # ✅ entry-offline 리소스 + 번들만 복사 (index.html 덮어쓰기 금지)
       - name: Copy entry-offline resources into www (keep index.html)
         run: |
           set -Eeuo pipefail
@@ -159,6 +155,7 @@ jobs:
             echo "ERROR: renderer_build not found"
             exit 1
           fi
+
           echo "== verify bundles =="
           test -f "www/renderer_build/init.bundle.js"
           test -f "www/renderer_build/render.bundle.js"
@@ -171,7 +168,6 @@ jobs:
           echo "== grep entrybot1 in www =="
           find "www/lib/@entrylabs/entry/images/media" -maxdepth 1 -type f | grep -i entrybot1 || true
 
-      # ✅✅ (추가) 하위폴더 이미지 경로/대소문자/레거시 요청 자동 보정 (이 step만 추가)
       - name: Fix missing images paths (case/legacy) in www
         run: |
           set -Eeuo pipefail
@@ -179,7 +175,6 @@ jobs:
           import os, re, shutil
 
           ROOT = "www"
-
           img_root = os.path.join(ROOT, "images")
           img_index = {}
           if os.path.isdir(img_root):
@@ -240,180 +235,123 @@ jobs:
           print("[fix-images] check:", chk, "OK" if os.path.exists(chk) else "MISS")
           PY
 
+      # ✅ 아이콘류는 PNG가 "너무 커지는" 걸 막기 위해 -w 캡 적용
       - name: Make PNG fallback for SVG icons (block_icon etc.)
         run: |
           set -Eeuo pipefail
           sudo apt-get update -y
           sudo apt-get install -y librsvg2-bin
+
           if [ -d "www/images/block_icon" ]; then
             find www/images/block_icon -type f -name '*.svg' -print0 | while IFS= read -r -d '' f; do
               out="${f%.svg}.png"
               if [ ! -f "$out" ]; then
-                rsvg-convert "$f" -o "$out" || true
+                rsvg-convert -w 256 "$f" -o "$out" || true
               fi
             done
           fi
+
           if [ -d "www/images/icon/block_icon" ]; then
             find www/images/icon/block_icon -type f -name '*.svg' -print0 | while IFS= read -r -d '' f; do
               out="${f%.svg}.png"
               if [ ! -f "$out" ]; then
-                rsvg-convert "$f" -o "$out" || true
+                rsvg-convert -w 256 "$f" -o "$out" || true
               fi
             done
           fi
+
           echo "PNG fallback count:"
           find www/images -type f -name '*.png' | wc -l || true
 
-      - name: Convert SVG icons to PNG (for Android Canvas)
-        run: |
-          set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y librsvg2-bin
-          find www/images -type f -name "*.svg" -print0 | while IFS= read -r -d '' f; do
-            out="${f%.svg}.png"
-            if [ ! -f "$out" ]; then
-              rsvg-convert "$f" -o "$out" || true
-            fi
-          done
-          echo "SVG count:"; find www/images -type f -name "*.svg" | wc -l || true
-          echo "PNG count:"; find www/images -type f -name "*.png" | wc -l || true
-
+      # ✅ @entrylabs/entry 아래는 리소스가 다양하니 조금 더 큰 캡(512) 권장
       - name: Convert @entrylabs entry SVG to PNG (for Android Canvas)
         run: |
           set -Eeuo pipefail
           sudo apt-get update -y
           sudo apt-get install -y librsvg2-bin
+
           if [ -d "www/lib/@entrylabs/entry/images" ]; then
             find "www/lib/@entrylabs/entry/images" -type f -name "*.svg" -print0 | while IFS= read -r -d '' f; do
               out="${f%.svg}.png"
               if [ ! -f "$out" ]; then
-                rsvg-convert "$f" -o "$out" || true
+                rsvg-convert -w 512 "$f" -o "$out" || true
               fi
             done
           fi
+
           echo "entry lib SVG count:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.svg" | wc -l || true
           echo "entry lib PNG count:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.png" | wc -l || true
 
-      # ✅✅✅✅✅ (추가) 아이콘/미디어 PNG가 너무 큰 경우만 자동 축소(크게 보임 방지)
-      - name: Normalize oversized PNG dimensions (only shrink)
-        run: |
-          set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y imagemagick
-
-          # 1) block_icon 계열: 128px 이상은 128로 축소 (큰 것만)
-          for d in \
-            "www/images/block_icon" \
-            "www/images/icon/block_icon" \
-            "www/lib/@entrylabs/entry/images/block_icon" \
-            "www/lib/@entrylabs/entry/images/icon/block_icon"
-          do
-            if [ -d "$d" ]; then
-              find "$d" -type f -name "*.png" -print0 | while IFS= read -r -d '' f; do
-                mogrify -resize 128x128\> "$f" 2>/dev/null || true
-              done
-            fi
-          done
-
-          # 2) media(캐릭터/로고 등): 512px 이상은 512로 축소 (큰 것만)
-          for d in \
-            "www/lib/@entrylabs/entry/images/media" \
-            "www/lib/entry-js/images"
-          do
-            if [ -d "$d" ]; then
-              find "$d" -type f -name "*.png" -print0 | while IFS= read -r -d '' f; do
-                mogrify -resize 512x512\> "$f" 2>/dev/null || true
-              done
-            fi
-          done
-
-      # ✅✅✅✅✅ (핵심) PNG가 실제 존재하는 경우에만 .svg 참조를 .png로 병렬 치환
-      - name: Rewrite SVG refs to PNG where PNG exists (parallel)
+      # ✅✅✅ 핵심: (병렬) www 전체에서 svg 참조를 png로 "문자열 자체" 치환
+      - name: Rewrite ALL SVG refs to PNG (parallel)
         run: |
           set -Eeuo pipefail
           python3 - <<'PY'
-          import os, re
-          from concurrent.futures import ProcessPoolExecutor, as_completed
-          from urllib.parse import urlparse
+          import os, re, sys
+          from concurrent.futures import ThreadPoolExecutor, as_completed
 
-          ROOT = "www"
-          exts = (".js", ".css", ".html")
+          ROOT="www"
+          exts=(".js",".css",".html")
 
+          # .svg, .SVG + ( ?v=..., #... )까지 처리
+          # - /images/...svg
+          # - /lib/@entrylabs/entry/images/...svg
+          # - 상대경로 ./images/...svg 등
           pat = re.compile(
-              r'((?:https?://[^"\'\)\s]+)?'
-              r'(?:/|\./|\.\./)?'
-              r'(?:lib/@entrylabs/entry/images|images)/'
-              r'[A-Za-z0-9_\-./]+?)'
-              r'\.svg'
-              r'(\b|[?#"\'\)\s])'
+            r'((?:https?://[^"\')\s]+/)?'              # optional absolute base
+            r'(?:/|\./|\.\./)?'                        # optional leading
+            r'(?:lib/@entrylabs/entry/images|images)'  # root
+            r'/[A-Za-z0-9_\-./]+?)'                    # path
+            r'\.svg'                                   # ext
+            r'(?=($|[?#"\'\)\s]))',                    # boundary (keep query/hash)
+            flags=re.IGNORECASE
           )
 
-          def norm_to_fs(path_with_opt_url: str) -> str:
-              if path_with_opt_url.startswith("http://") or path_with_opt_url.startswith("https://"):
-                  p = urlparse(path_with_opt_url).path
-              else:
-                  p = path_with_opt_url
-              p = p.replace("\\", "/")
-              while p.startswith("../"):
-                  p = p[3:]
-              if p.startswith("./"):
-                  p = p[2:]
-              if p.startswith("/"):
-                  p = p[1:]
-              return p
+          def handle_file(p):
+            try:
+              b = open(p, "rb").read()
+              s = b.decode("utf-8", "ignore")
+            except:
+              return (p, 0, False)
 
-          def process_file(fp: str):
-              try:
-                  raw = open(fp, "rb").read()
-              except:
-                  return (fp, 0, 0)
+            ns, n = pat.subn(r'\1.png', s)
+            if n:
+              open(p, "wb").write(ns.encode("utf-8"))
+              return (p, n, True)
+            return (p, 0, False)
 
-              s = raw.decode("utf-8", "ignore")
-              changed = 0
-              scanned = 0
+          files=[]
+          for dp,_,fns in os.walk(ROOT):
+            for fn in fns:
+              if fn.endswith(exts):
+                files.append(os.path.join(dp, fn))
 
-              def repl(m):
-                  nonlocal changed, scanned
-                  scanned += 1
-                  base = m.group(1)
-                  tail = m.group(2)
+          changed_files=0
+          changed_refs=0
 
-                  fs_rel = norm_to_fs(base)
-                  png_path = os.path.join(ROOT, fs_rel + ".png")
-                  if os.path.exists(png_path):
-                      changed += 1
-                      return base + ".png" + tail
-                  return m.group(0)
+          # 병렬(스레드) — 파일 I/O + 정규식 치환은 스레드가 잘 먹습니다
+          workers = min(32, (os.cpu_count() or 4) * 2)
+          with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs=[ex.submit(handle_file,p) for p in files]
+            for f in as_completed(futs):
+              p, n, ch = f.result()
+              if ch:
+                changed_files += 1
+                changed_refs += n
 
-              ns, _ = pat.subn(repl, s)
-              if changed:
-                  open(fp, "wb").write(ns.encode("utf-8"))
-              return (fp, scanned, changed)
-
-          files = []
-          for dp, _, fns in os.walk(ROOT):
-              for fn in fns:
-                  if fn.endswith(exts):
-                      files.append(os.path.join(dp, fn))
-
-          total_scanned = 0
-          total_changed = 0
-          touched_files = 0
-
-          workers = min(12, (os.cpu_count() or 4))
-          with ProcessPoolExecutor(max_workers=workers) as ex:
-              futs = [ex.submit(process_file, f) for f in files]
-              for fut in as_completed(futs):
-                  fp, scanned, changed = fut.result()
-                  total_scanned += scanned
-                  total_changed += changed
-                  if changed:
-                      touched_files += 1
-
-          print(f"[rewrite-svg->png] files={len(files)} touched={touched_files} scanned={total_scanned} changed={total_changed} workers={workers}")
+          print(f"[rewrite-svg->png] workers={workers} files={len(files)} files_changed={changed_files} refs_changed={changed_refs}")
           PY
 
-      # ✅✅✅✅✅ PNG 재인코딩 (Android WebView broken image 방지) - 깨진 PNG는 스킵
+      # ✅ 남은 .svg 참조가 있으면 바로 보여주기 (원인 파악용)
+      - name: Verify: no .svg refs remain (show first 50)
+        run: |
+          set -Eeuo pipefail
+          echo "== remaining .svg references in www (first 50) =="
+          set +e
+          grep -RIn --exclude-dir=node_modules --exclude='*.map' '\.svg([?#]|["'\'')[:space:]]|$)' www | head -n 50
+          exit 0
+
+      # ✅✅✅ PNG 재인코딩: 깨진/비정상 PNG는 스킵
       - name: Re-encode ALL PNGs for Android WebView
         run: |
           set -Eeuo pipefail
@@ -434,49 +372,6 @@ jobs:
 
             mv "$f".tmp "$f"
           done
-      # ✅✅✅✅✅ (추가) PNG 디코딩 실패 파일 자동 복구: SVG 있으면 재생성, 없으면 1x1 투명으로 대체
-      - name: Repair broken PNGs (regen from SVG or replace)
-        run: |
-          set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y imagemagick librsvg2-bin
-
-          repaired=0
-          replaced=0
-          checked=0
-
-          find www -type f -name "*.png" -print0 | while IFS= read -r -d '' f; do
-            checked=$((checked+1))
-
-            # identify로 디코딩 가능 여부 체크
-            if identify "$f" >/dev/null 2>&1; then
-              continue
-            fi
-
-            base="${f%.png}"
-            svg="$base.svg"
-
-            if [ -f "$svg" ]; then
-              # SVG가 있으면 PNG 재생성
-              rsvg-convert "$svg" -o "$f" >/dev/null 2>&1 || true
-              # 그래도 깨졌으면 1x1로 대체
-              if ! identify "$f" >/dev/null 2>&1; then
-                convert -size 1x1 xc:none "$f" >/dev/null 2>&1 || true
-                replaced=$((replaced+1))
-                echo "REPLACED(1x1): $f"
-              else
-                repaired=$((repaired+1))
-                echo "REPAIRED(from svg): $f"
-              fi
-            else
-              # SVG도 없으면 1x1 투명으로 대체
-              convert -size 1x1 xc:none "$f" >/dev/null 2>&1 || true
-              replaced=$((replaced+1))
-              echo "REPLACED(1x1): $f"
-            fi
-          done
-
-          echo "DONE repair-broken-png: checked=$checked repaired=$repaired replaced=$replaced"
 
       - name: Ensure Android platform
         run: |
@@ -531,6 +426,9 @@ jobs:
           unzip -l "$APK" | grep -F "assets/public/images/block_icon/ai_hand_icon.svg" || true
           echo "== test func_icon.svg =="
           unzip -l "$APK" | grep -F "assets/public/images/block_icon/func_icon.svg" || true
+
+          echo "== index.html head (first 40 lines) =="
+          unzip -p "$APK" assets/public/index.html | head -n 40
 
           echo "== entrybot1 png in apk =="
           unzip -l "$APK" | grep -F "assets/public/lib/@entrylabs/entry/images/media/entrybot1.png" || true
