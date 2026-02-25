@@ -343,7 +343,7 @@ jobs:
           PY
 
       # ✅ 남은 .svg 참조가 있으면 바로 보여주기 (원인 파악용)
-      - name: Verify: no .svg refs remain (show first 50)
+      - name: Verify no .svg refs remain (show first 50)
         run: |
           set -Eeuo pipefail
           echo "== remaining .svg references in www (first 50) =="
