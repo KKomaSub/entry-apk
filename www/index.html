@@ -4,7 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Entry Offline Editor</title>
+
   <link rel="stylesheet" href="overrides.css">
+
   <style>
     html,body{margin:0;height:100%;overflow:hidden;background:#111}
     #entryContainer{width:100%;height:100%;background:#f5f5f5}
@@ -28,18 +30,16 @@
       el.appendChild(d);
       el.scrollTop = el.scrollHeight;
     }
-
-    // ✅ 전역 함수로 고정
+    // 전역 함수
     window.bootLine = bootLineImpl;
     window.__bootLine = bootLineImpl;
     window.__bootline = bootLineImpl;
-  </script>
 
-  <script>
-    /* ✅ FIX: broken 이미지 drawImage 예외를 삼켜서 렌더 루프가 죽지 않게 */
+    const bootLine = (...args) => window.bootLine(...args);
+
+    // broken 이미지 drawImage 예외 삼키기(이건 경로패치가 아니라 “렌더 루프 보호”라 유지)
     if (!window.__DRAWIMAGE_GUARD__) {
       window.__DRAWIMAGE_GUARD__ = true;
-
       const proto = CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
       if (proto && proto.drawImage) {
         const _drawImage = proto.drawImage;
@@ -47,119 +47,12 @@
           try {
             if (img && img.tagName === "IMG") {
               const nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
-              if (nw === 0 || nh === 0) return; // broken이면 스킵
+              if (nw === 0 || nh === 0) return;
             }
             return _drawImage.call(this, img, ...rest);
-          } catch (_) {
-            return; // 무조건 삼킴
-          }
+          } catch (_) { return; }
         };
       }
-    }
-  </script>
-<script>
-  // ✅ /images/... 로 요청되는 절대경로를 BASE 기준 상대경로로 바꿈
-  function installImagesAbsolutePathPatch(BASE) {
-    if (window.__ABS_IMAGES_PATCHED__) return;
-    window.__ABS_IMAGES_PATCHED__ = true;
-
-    const fix = (u) => {
-      if (typeof u !== "string") return u;
-      // /images/xxx -> {BASE}images/xxx
-      if (u.startsWith("/images/")) return BASE + "images/" + u.slice("/images/".length);
-      return u;
-    };
-
-    // 1) Image.src (Canvas 이미지 로딩 포함)
-    const d = Object.getOwnPropertyDescriptor(Image.prototype, "src");
-    if (d && d.set) {
-      Object.defineProperty(Image.prototype, "src", {
-        get: d.get,
-        set(v) { return d.set.call(this, fix(v)); }
-      });
-    }
-
-    // 2) XHR (createjs/preloadjs가 여길 많이 탐)
-    const _open = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function (method, url, ...rest) {
-      return _open.call(this, method, fix(url), ...rest);
-    };
-
-    // 3) fetch (혹시 쓰는 경우)
-    if (window.fetch) {
-      const _fetch = window.fetch.bind(window);
-      window.fetch = (input, init) => {
-        if (typeof input === "string") return _fetch(fix(input), init);
-        if (input && typeof input.url === "string") return _fetch(fix(input.url), init);
-        return _fetch(input, init);
-      };
-    }
-
-    if (window.bootLine) bootLine("PATCH: /images/* -> " + BASE + "images/*", "dim");
-  }
-</script>
-  <script>
-    // 기존 호출 호환용 alias
-    const bootLine = (...args) => window.bootLine(...args);
-
-    async function testImageDecode(url, timeoutMs = 4000) {
-      bootLine(`IMG start ${url}`, "dim");
-      return await new Promise((resolve) => {
-        const img = new Image();
-        let done = false;
-
-        const t = setTimeout(() => {
-          if (done) return;
-          done = true;
-          bootLine(`IMG timeout ${url}`, "bad");
-          resolve(false);
-        }, timeoutMs);
-
-        img.onload = () => {
-          if (done) return;
-          done = true;
-          clearTimeout(t);
-          bootLine(`IMG ok ${url} natural=${img.naturalWidth}x${img.naturalHeight}`, "ok");
-          resolve(img.naturalWidth > 0 && img.naturalHeight > 0);
-        };
-        img.onerror = () => {
-          if (done) return;
-          done = true;
-          clearTimeout(t);
-          bootLine(`IMG fail ${url}`, "bad");
-          resolve(false);
-        };
-
-        img.src = url + (url.includes("?") ? "&" : "?") + "t=" + Date.now();
-      });
-    }
-
-    async function testAsset(url, timeoutMs = 1500) {
-      bootLine(`TEST start ${url}`, "dim");
-
-      const timeout = new Promise((resolve) =>
-        setTimeout(() => resolve({ timeout: true }), timeoutMs)
-      );
-
-      const req = fetch(url, { cache: "no-store" })
-        .then((r) => ({ r }))
-        .catch((e) => ({ e }));
-
-      const out = await Promise.race([req, timeout]);
-
-      if (out.timeout) {
-        bootLine(`TEST timeout ${url} (${timeoutMs}ms)`, "bad");
-        return false;
-      }
-      if (out.e) {
-        bootLine(`TEST fail ${url} -> ${String(out.e && out.e.name ? out.e.name : out.e)}`, "bad");
-        return false;
-      }
-
-      const r = out.r;
-      const ct = r.headers.get("content-type");
-      bootLine(`TEST done  ${url} -> ${r.status} ct=${ct}`, r.ok ? "ok" : "bad");
-      return r.ok;
     }
 
     window.onerror = function (m, s, l, c, e) {
@@ -211,7 +104,7 @@
     }
 
     async function boot() {
-      // ✅ BASE 자동 탐지 유지
+      // BASE 자동 탐지(유지)
       const candidates = ["./", "/", "/public/", "/www/"];
       let BASE = "./";
       for (const c of candidates) {
@@ -219,84 +112,7 @@
         if (await probeBase(c)) { BASE = c; break; }
       }
       bootLine("BASE = " + BASE, "ok");
-      // ✅ FINAL PATH FIX (Image + XHR + fetch 모두 커버)
-// 절대경로 /images/... → ./images/...
-// ✅ ONE-LINE PROBE: 실제 이미지/XHR 요청 경로 1줄만 찍기(최초 1회)
-if (!window.__ONE_PROBE__) {
-  window.__ONE_PROBE__ = true;
 
-  // 1) Image.src 찍기 (최초 1회)
-  const d = Object.getOwnPropertyDescriptor(Image.prototype, "src");
-  if (d && d.set) {
-    Object.defineProperty(Image.prototype, "src", {
-      get: d.get,
-      set(v) {
-        if (!window.__PROBED_IMG__) {
-          window.__PROBED_IMG__ = true;
-          bootLine("PROBE IMG.src = " + v, "bad");
-        }
-        return d.set.call(this, v);
-      }
-    });
-  }
-
-  // 2) XHR.open 찍기 (최초 1회) — createjs/preloadjs가 주로 여기로 옴
-  const _open = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
-    if (!window.__PROBED_XHR__) {
-      window.__PROBED_XHR__ = true;
-      bootLine("PROBE XHR.url = " + url, "bad");
-    }
-    return _open.call(this, method, url, ...rest);
-  };
-}
-function __fixImagePath(u){
-  if (typeof u !== "string") return u;
-  if (u.startsWith("/images/")) {
-    return "./images/" + u.slice(8);
-  }
-  return u;
-}
-
-// 1️⃣ Image
-{
-  const d = Object.getOwnPropertyDescriptor(Image.prototype, "src");
-  if (d && d.set) {
-    Object.defineProperty(Image.prototype, "src", {
-      get: d.get,
-      set(v){ return d.set.call(this, __fixImagePath(v)); }
-    });
-  }
-}
-
-// 2️⃣ XMLHttpRequest (createjs 핵심)
-{
-  const _open = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function(method, url, ...rest){
-    return _open.call(this, method, __fixImagePath(url), ...rest);
-  };
-}
-
-// 3️⃣ fetch
-if (window.fetch){
-  const _fetch = window.fetch.bind(window);
-  window.fetch = (input, init) => {
-    if (typeof input === "string")
-      return _fetch(__fixImagePath(input), init);
-
-    if (input && typeof input.url === "string")
-      return _fetch(new Request(__fixImagePath(input.url), input), init);
-
-    return _fetch(input, init);
-  };
-}
-
-bootLine("PATCH: /images → ./images (Image+XHR+fetch)", "ok");
-installImagesAbsolutePathPatch(BASE);
-      // ✅ MIN PATCH: 절대경로 /images/... → 상대 ./images/...
-Object.defineProperty(Image.prototype, "src", {
-  set(v){ this.setAttribute("src", v && v.startsWith("/images/") ? "./images/" + v.slice(8) : v); }
-});
       // CSS
       const cssList = [
         BASE + "lib/entry-tool/dist/entry-tool.css",
@@ -394,7 +210,7 @@ Object.defineProperty(Image.prototype, "src", {
         bootLine("PATCH lodash: _.contains/_.findWhere ok", "dim");
       }
 
-      // EntryStatic path local (유지)
+      // EntryStatic path (유지)
       if (window.EntryStatic) {
         EntryStatic.imagePath = BASE + "images/";
         EntryStatic.mediaPath = BASE + "media/";
@@ -402,34 +218,6 @@ Object.defineProperty(Image.prototype, "src", {
       }
 
       bootLine("HREF = " + location.href, "dim");
-
-      // ✅ 테스트는 png만
-      await testAsset(BASE + "images/_1x1.png", 1500);
-      await testAsset(BASE + "images/block_icon/ai_hand_icon.png", 1500);
-      await testImageDecode(BASE + "images/block_icon/ai_hand_icon.png");
-
-      bootLine("AFTER TESTS", "ok");
-
-      bootLine("_.memoize = " + (window._ ? typeof _.memoize : "N/A"), window._ ? "ok" : "bad");
-      bootLine("$.fn.jquery = " + (window.$ && $.fn ? $.fn.jquery : "N/A"), (window.$ && $.fn) ? "ok" : "bad");
-      bootLine("createjs = " + (typeof window.createjs), window.createjs ? "ok" : "bad");
-      bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
-      bootLine("EntryTool = " + (typeof window.EntryTool), window.EntryTool ? "ok" : "bad");
-      bootLine("EntryVideoLegacy = " + (typeof window.EntryVideoLegacy), window.EntryVideoLegacy ? "ok" : "bad");
-      bootLine("EntryStatic = " + (typeof window.EntryStatic), window.EntryStatic ? "ok" : "bad");
-      bootLine("EntrySoundEditor = " + (typeof window.EntrySoundEditor), window.EntrySoundEditor ? "ok" : "dim");
-      bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
-        (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
-
-      must(window._, "lodash(_)");
-      must(window.$, "jQuery($)");
-      must(window.createjs, "createjs");
-      must(window.Lang, "Lang");
-      must(window.EntryTool, "EntryTool");
-      must(window.EntryVideoLegacy, "EntryVideoLegacy");
-      must(window.EntryStatic, "EntryStatic");
-      must(window.EntrySoundEditor, "EntrySoundEditor (optional stub OK)");
-      must(window.Entry && typeof window.Entry.init === "function", "Entry.init");
 
       bootLine("Starting Entry.init …", "dim");
 
