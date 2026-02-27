@@ -221,7 +221,35 @@
       bootLine("BASE = " + BASE, "ok");
       // ✅ FINAL PATH FIX (Image + XHR + fetch 모두 커버)
 // 절대경로 /images/... → ./images/...
+// ✅ ONE-LINE PROBE: 실제 이미지/XHR 요청 경로 1줄만 찍기(최초 1회)
+if (!window.__ONE_PROBE__) {
+  window.__ONE_PROBE__ = true;
 
+  // 1) Image.src 찍기 (최초 1회)
+  const d = Object.getOwnPropertyDescriptor(Image.prototype, "src");
+  if (d && d.set) {
+    Object.defineProperty(Image.prototype, "src", {
+      get: d.get,
+      set(v) {
+        if (!window.__PROBED_IMG__) {
+          window.__PROBED_IMG__ = true;
+          bootLine("PROBE IMG.src = " + v, "bad");
+        }
+        return d.set.call(this, v);
+      }
+    });
+  }
+
+  // 2) XHR.open 찍기 (최초 1회) — createjs/preloadjs가 주로 여기로 옴
+  const _open = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+    if (!window.__PROBED_XHR__) {
+      window.__PROBED_XHR__ = true;
+      bootLine("PROBE XHR.url = " + url, "bad");
+    }
+    return _open.call(this, method, url, ...rest);
+  };
+}
 function __fixImagePath(u){
   if (typeof u !== "string") return u;
   if (u.startsWith("/images/")) {
