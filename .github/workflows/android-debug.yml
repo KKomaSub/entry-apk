@@ -14,7 +14,6 @@ jobs:
       actions: write
 
     env:
-      # webpack(old)/node18에서 종종 필요한 경우가 있어 기본으로 켜둠
       NODE_OPTIONS: --openssl-legacy-provider
 
     steps:
@@ -26,7 +25,6 @@ jobs:
         with:
           node-version: "18"
 
-      # ✅ Yarn/Gradle 캐시
       - name: Cache Yarn
         uses: actions/cache@v4
         with:
@@ -64,7 +62,6 @@ jobs:
           echo "== find main.html =="
           find entry-offline -type f -name "main.html" -print | head -n 50 || true
 
-      # ✅ Linux(case-sensitive)에서 ./components/Index import 깨지는 문제 자동 보정
       - name: Patch entry-offline import casing (Index -> index)
         run: |
           set -Eeuo pipefail
@@ -85,7 +82,6 @@ jobs:
             exit 1
           fi
 
-          # 혹시 다른 파일에도 남아있으면 일괄 패치
           if grep -RIn --exclude-dir=node_modules "components/Index" entry-offline/src/renderer >/dev/null 2>&1; then
             find entry-offline/src/renderer -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' \) -print0 \
               | xargs -0 sed -i 's#\./components/Index#./components/index#g'
@@ -95,9 +91,6 @@ jobs:
           ls -la entry-offline/src/renderer/components | head -n 200 || true
           test ! -f entry-offline/src/renderer/components/Index.tsx || (echo "Index.tsx still exists" && exit 1)
 
-      # ✅ entry-offline renderer_build 실제 생성 (흰화면 방지의 핵심)
-      # - build 스크립트가 없어도, "renderer_build"가 이미 존재할 수 있음(리포에 포함된 경우)
-      # - 없으면 webpack을 시도 (NODE_OPTIONS=--openssl-legacy-provider 적용됨)
       - name: Build entry-offline renderer bundles (ensure renderer_build)
         run: |
           set -Eeuo pipefail
@@ -125,7 +118,6 @@ jobs:
           ls -la www | head -n 120 || true
           test -f www/index.html || true
 
-      # ✅ entryjs 폴더명 정규화: entry-js -> entryjs (index.html 로더 경로와 일치시키기)
       - name: Normalize entryjs folder name (entry-js -> entryjs)
         run: |
           set -Eeuo pipefail
@@ -135,7 +127,7 @@ jobs:
           fi
           ls -la www/lib | head -n 80 || true
 
-      # ✅ entry-tool은 로컬 www/lib/entry-tool 로 제공해야 함 (playentry CDN 의존 제거)
+      # ✅✅✅ 여기만 수정됨: npm ci 제거 + legacy-peer-deps로 고정
       - name: Build entry-tool and copy into www/lib/entry-tool
         run: |
           set -Eeuo pipefail
@@ -143,7 +135,8 @@ jobs:
           git clone --depth 1 https://github.com/entrylabs/entry-tool.git entry-tool
 
           pushd entry-tool >/dev/null
-          npm ci || npm install
+          # lockfile 없을 수 있고, peerDeps 충돌이 떠서 legacy-peer-deps로 설치
+          npm install --legacy-peer-deps
           npm run build
           popd >/dev/null
 
@@ -155,7 +148,6 @@ jobs:
           test -f www/lib/entry-tool/dist/entry-tool.js
           test -f www/lib/entry-tool/dist/entry-tool.css
 
-      # ✅ www/index.html을 “반영된(최소)” 버전으로 고정 (경로 후킹 제거 버전)
       - name: Write www/index.html (minimal, no path hooking)
         run: |
           set -Eeuo pipefail
@@ -196,7 +188,6 @@ jobs:
             </script>
 
             <script>
-              /* broken 이미지 drawImage 예외를 삼켜서 렌더 루프가 죽지 않게 */
               if (!window.__DRAWIMAGE_GUARD__) {
                 window.__DRAWIMAGE_GUARD__ = true;
                 const proto = CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
@@ -209,9 +200,7 @@ jobs:
                         if (nw === 0 || nh === 0) return;
                       }
                       return _drawImage.call(this, img, ...rest);
-                    } catch (_) {
-                      return;
-                    }
+                    } catch (_) { return; }
                   };
                 }
               }
@@ -286,9 +275,7 @@ jobs:
                 try {
                   const r = await fetch(url, { method: "GET", cache: "no-store" });
                   return r.ok;
-                } catch (_) {
-                  return false;
-                }
+                } catch (_) { return false; }
               }
 
               function loadJS(src) {
@@ -344,7 +331,6 @@ jobs:
                   bootLine((r.ok ? "OK   CSS  " : "MISS CSS ") + href, r.ok ? "ok" : "bad");
                 }
 
-                // locales (optional)
                 {
                   const src = BASE + "js/ws/locales.js";
                   const r = await loadJS(src);
@@ -358,17 +344,17 @@ jobs:
                   BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
                   BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
                   BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
-                  BASE + "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js", // optional
+                  BASE + "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js",
                   BASE + "lib/velocity/velocity.min.js",
                   BASE + "lib/codemirror/codemirror.js",
-                  BASE + "lib/codemirror/vim.js", // optional
+                  BASE + "lib/codemirror/vim.js",
                   BASE + "lib/entry-tool/dist/entry-tool.js",
                   BASE + "lib/entryjs/extern/lang/ko.js",
                   BASE + "lib/entryjs/extern/util/static.js",
                   BASE + "lib/entryjs/extern/util/handle.js",
                   BASE + "lib/entryjs/extern/util/bignumber.min.js",
                   BASE + "lib/module/legacy-video/index.js",
-                  BASE + "lib/external/sound/sound-editor.js", // optional
+                  BASE + "lib/external/sound/sound-editor.js",
                   BASE + "lib/entryjs/dist/entry.min.js",
                   BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
                 ];
@@ -402,7 +388,6 @@ jobs:
                   );
                 }
 
-                // lodash 호환
                 if (window._) {
                   if (typeof _.contains !== "function" && typeof _.includes === "function") _.contains = _.includes;
                   if (typeof _.findWhere !== "function") {
@@ -422,23 +407,9 @@ jobs:
                   EntryStatic.uploadPath = BASE + "uploads/";
                 }
 
-                bootLine("HREF = " + location.href, "dim");
-
                 await testAsset(BASE + "images/_1x1.png", 1500);
                 await testAsset(BASE + "images/block_icon/ai_hand_icon.png", 1500);
                 await testImageDecode(BASE + "images/block_icon/ai_hand_icon.png");
-                bootLine("AFTER TESTS", "ok");
-
-                bootLine("_.memoize = " + (window._ ? typeof _.memoize : "N/A"), window._ ? "ok" : "bad");
-                bootLine("$.fn.jquery = " + (window.$ && $.fn ? $.fn.jquery : "N/A"), (window.$ && $.fn) ? "ok" : "bad");
-                bootLine("createjs = " + (typeof window.createjs), window.createjs ? "ok" : "bad");
-                bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
-                bootLine("EntryTool = " + (typeof window.EntryTool), window.EntryTool ? "ok" : "bad");
-                bootLine("EntryVideoLegacy = " + (typeof window.EntryVideoLegacy), window.EntryVideoLegacy ? "ok" : "bad");
-                bootLine("EntryStatic = " + (typeof window.EntryStatic), window.EntryStatic ? "ok" : "bad");
-                bootLine("EntrySoundEditor = " + (typeof window.EntrySoundEditor), window.EntrySoundEditor ? "ok" : "dim");
-                bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
-                  (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
 
                 must(window._, "lodash(_)");
                 must(window.$, "jQuery($)");
@@ -450,8 +421,6 @@ jobs:
                 must(window.EntrySoundEditor, "EntrySoundEditor (optional stub OK)");
                 must(window.Entry && typeof window.Entry.init === "function", "Entry.init");
 
-                bootLine("Starting Entry.init …", "dim");
-
                 Entry.init(document.getElementById("entryContainer"), {
                   type: "workspace",
                   libDir: "./lib",
@@ -459,8 +428,7 @@ jobs:
                 });
 
                 Entry.loadProject();
-
-                bootLine("BOOT OK: init+loadProject called, hiding logs…", "dim");
+                bootLine("BOOT OK", "ok");
                 hideBootLater(1500);
               }
 
@@ -472,7 +440,6 @@ jobs:
               });
             </script>
           </head>
-
           <body>
             <div id="entryContainer"></div>
             <div id="boot">Entry Offline Editor
@@ -484,9 +451,7 @@ jobs:
 
           test -f www/index.html
           echo "WROTE: www/index.html"
-          head -n 30 www/index.html || true
 
-      # ✅ entry-offline 리소스 + 번들만 복사 (index.html 덮어쓰기 금지)
       - name: Copy entry-offline resources into www (keep index.html)
         run: |
           set -Eeuo pipefail
@@ -500,7 +465,6 @@ jobs:
             echo "COPIED: renderer/resources"
           fi
 
-          # renderer_build 복사
           if [ -d "entry-offline/src/renderer_build" ]; then
             mkdir -p "www/renderer_build"
             cp -a "entry-offline/src/renderer_build/." "www/renderer_build/"
@@ -510,11 +474,9 @@ jobs:
             exit 1
           fi
 
-          echo "== verify bundles =="
           test -f "www/renderer_build/init.bundle.js"
           test -f "www/renderer_build/render.bundle.js"
 
-      # ✅ www/images는 반드시 존재해야 함 (EntryStatic.imagePath가 ./images/를 봄)
       - name: Ensure www/images exists (sync from entryjs images)
         run: |
           set -Eeuo pipefail
@@ -527,9 +489,7 @@ jobs:
             echo "WARN: www/lib/entryjs/images not found; keeping existing www/images"
           fi
 
-          echo "== verify images =="
           ls -la www/images | head -n 80 || true
-          test -f www/images/_1x1.png || true
 
       - name: Ensure Android platform
         run: |
