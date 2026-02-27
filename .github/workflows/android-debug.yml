@@ -13,6 +13,10 @@ jobs:
       contents: read
       actions: write
 
+    env:
+      # webpack(old)/node18에서 종종 필요한 경우가 있어 기본으로 켜둠
+      NODE_OPTIONS: --openssl-legacy-provider
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,8 +47,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Install deps
-        run: npm install
+      - name: Install deps (repo)
+        run: |
+          set -Eeuo pipefail
+          npm install
 
       - name: Fetch entry-offline source (git clone)
         run: |
@@ -79,7 +85,7 @@ jobs:
             exit 1
           fi
 
-          grep -RIn --exclude-dir=node_modules "components/Index" entry-offline/src/renderer || true
+          # 혹시 다른 파일에도 남아있으면 일괄 패치
           if grep -RIn --exclude-dir=node_modules "components/Index" entry-offline/src/renderer >/dev/null 2>&1; then
             find entry-offline/src/renderer -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' \) -print0 \
               | xargs -0 sed -i 's#\./components/Index#./components/index#g'
@@ -89,12 +95,10 @@ jobs:
           ls -la entry-offline/src/renderer/components | head -n 200 || true
           test ! -f entry-offline/src/renderer/components/Index.tsx || (echo "Index.tsx still exists" && exit 1)
 
-      # ✅ entry-offline renderer_build 생성
-      #   - Node18에서 webpack4/legacy hash면 ERR_OSSL_EVP_UNSUPPORTED가 뜰 수 있어
-      #     openssl legacy provider로 우회
-      - name: Build entry-offline renderer bundles
-        env:
-          NODE_OPTIONS: --openssl-legacy-provider
+      # ✅ entry-offline renderer_build 실제 생성 (흰화면 방지의 핵심)
+      # - build 스크립트가 없어도, "renderer_build"가 이미 존재할 수 있음(리포에 포함된 경우)
+      # - 없으면 webpack을 시도 (NODE_OPTIONS=--openssl-legacy-provider 적용됨)
+      - name: Build entry-offline renderer bundles (ensure renderer_build)
         run: |
           set -Eeuo pipefail
           corepack enable || true
@@ -102,26 +106,14 @@ jobs:
           echo "== yarn install (entry-offline) =="
           yarn --cwd entry-offline install --frozen-lockfile || yarn --cwd entry-offline install
 
-          echo "== try build commands (entry-offline) =="
-          set +e
-          for cmd in \
-            "yarn --cwd entry-offline webpack" \
-            "yarn --cwd entry-offline dist"
-          do
-            echo "TRY: $cmd"
-            $cmd
-            code=$?
-            if [ $code -eq 0 ]; then
-              echo "OK: build succeeded with: $cmd"
-              break
-            else
-              echo "FAIL($code): $cmd"
-            fi
-          done
-          set -e
+          if [ -d "entry-offline/src/renderer_build" ] && [ -f "entry-offline/src/renderer_build/init.bundle.js" ] && [ -f "entry-offline/src/renderer_build/render.bundle.js" ]; then
+            echo "OK: renderer_build already exists in repo"
+          else
+            echo "renderer_build missing -> try webpack"
+            (cd entry-offline && ./node_modules/.bin/webpack)
+          fi
 
-          echo "== find renderer_build output =="
-          find entry-offline -maxdepth 8 -type d -name "renderer_build" -print | head -n 20 || true
+          echo "== verify renderer_build =="
           test -f entry-offline/src/renderer_build/init.bundle.js
           test -f entry-offline/src/renderer_build/render.bundle.js
 
@@ -130,41 +122,25 @@ jobs:
           set -Eeuo pipefail
           bash scripts/fetch_entry_assets.sh
           du -sh www || true
-          ls -la www | head -n 80 || true
-          test -f www/index.html
+          ls -la www | head -n 120 || true
+          test -f www/index.html || true
 
-      # ✅✅ 핵심: www/images 가 없으면 ./images 는 당연히 안 보임
-      # entryjs 이미지가 보통 www/lib/entryjs/images or www/lib/entry-js/images 아래로만 내려오는 케이스가 많음
-      - name: Ensure www/images exists (sync from entryjs images)
+      # ✅ entryjs 폴더명 정규화: entry-js -> entryjs (index.html 로더 경로와 일치시키기)
+      - name: Normalize entryjs folder name (entry-js -> entryjs)
         run: |
           set -Eeuo pipefail
-          mkdir -p www/images
-
-          if [ -d "www/lib/entryjs/images" ]; then
-            rsync -a --delete "www/lib/entryjs/images/" "www/images/"
-            echo "SYNC: www/lib/entryjs/images -> www/images"
-          elif [ -d "www/lib/entry-js/images" ]; then
-            rsync -a --delete "www/lib/entry-js/images/" "www/images/"
-            echo "SYNC: www/lib/entry-js/images -> www/images"
-          else
-            echo "WARN: no entryjs images folder found under www/lib/"
+          if [ -d "www/lib/entry-js" ] && [ ! -d "www/lib/entryjs" ]; then
+            mv "www/lib/entry-js" "www/lib/entryjs"
+            echo "RENAMED: www/lib/entry-js -> www/lib/entryjs"
           fi
+          ls -la www/lib | head -n 80 || true
 
-          echo "== verify images =="
-          ls -la www/images | head -n 50 || true
-          test -f www/images/_1x1.png || true
-
-      # ✅ entry-tool이 필요한 경우(네가 말한 repo)
-      # index.html에서 lib/entry-tool/dist/entry-tool.(js|css) 를 로딩하므로
-      # www/lib/entry-tool/dist/ 아래에 실제 파일을 만들어야 함. 1
+      # ✅ entry-tool은 로컬 www/lib/entry-tool 로 제공해야 함 (playentry CDN 의존 제거)
       - name: Build entry-tool and copy into www/lib/entry-tool
         run: |
           set -Eeuo pipefail
           rm -rf entry-tool || true
           git clone --depth 1 https://github.com/entrylabs/entry-tool.git entry-tool
-
-          echo "== entry-tool build scripts =="
-          cat entry-tool/package.json | head -n 60 || true
 
           pushd entry-tool >/dev/null
           npm ci || npm install
@@ -176,10 +152,339 @@ jobs:
           cp -a entry-tool/dist www/lib/entry-tool/dist
           cp -a entry-tool/lib  www/lib/entry-tool/lib
 
-          echo "== verify entry-tool =="
-          ls -la www/lib/entry-tool/dist | head -n 50 || true
           test -f www/lib/entry-tool/dist/entry-tool.js
           test -f www/lib/entry-tool/dist/entry-tool.css
+
+      # ✅ www/index.html을 “반영된(최소)” 버전으로 고정 (경로 후킹 제거 버전)
+      - name: Write www/index.html (minimal, no path hooking)
+        run: |
+          set -Eeuo pipefail
+          cat > www/index.html <<'HTML'
+          <!doctype html>
+          <html lang="ko">
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width,initial-scale=1" />
+            <title>Entry Offline Editor</title>
+            <link rel="stylesheet" href="overrides.css">
+            <style>
+              html,body{margin:0;height:100%;overflow:hidden;background:#111}
+              #entryContainer{width:100%;height:100%;background:#f5f5f5}
+              #boot{
+                position:fixed;inset:0;background:#000;color:#0f0;
+                font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+                padding:12px;white-space:pre-wrap;overflow:auto;z-index:9999
+              }
+              .bad{color:#ff5c5c}
+              .dim{opacity:.85}
+              .ok{color:#66ff66}
+            </style>
+
+            <script>
+              function bootLineImpl(t, cls="") {
+                const el = document.getElementById("boot");
+                if (!el) return;
+                const d = document.createElement("div");
+                if (cls) d.className = cls;
+                d.textContent = t;
+                el.appendChild(d);
+                el.scrollTop = el.scrollHeight;
+              }
+              window.bootLine = bootLineImpl;
+              window.__bootLine = bootLineImpl;
+              window.__bootline = bootLineImpl;
+            </script>
+
+            <script>
+              /* broken 이미지 drawImage 예외를 삼켜서 렌더 루프가 죽지 않게 */
+              if (!window.__DRAWIMAGE_GUARD__) {
+                window.__DRAWIMAGE_GUARD__ = true;
+                const proto = CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
+                if (proto && proto.drawImage) {
+                  const _drawImage = proto.drawImage;
+                  proto.drawImage = function(img, ...rest) {
+                    try {
+                      if (img && img.tagName === "IMG") {
+                        const nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
+                        if (nw === 0 || nh === 0) return;
+                      }
+                      return _drawImage.call(this, img, ...rest);
+                    } catch (_) {
+                      return;
+                    }
+                  };
+                }
+              }
+            </script>
+
+            <script>
+              const bootLine = (...args) => window.bootLine(...args);
+
+              async function testImageDecode(url, timeoutMs = 4000) {
+                bootLine(`IMG start ${url}`, "dim");
+                return await new Promise((resolve) => {
+                  const img = new Image();
+                  let done = false;
+
+                  const t = setTimeout(() => {
+                    if (done) return;
+                    done = true;
+                    bootLine(`IMG timeout ${url}`, "bad");
+                    resolve(false);
+                  }, timeoutMs);
+
+                  img.onload = () => {
+                    if (done) return;
+                    done = true;
+                    clearTimeout(t);
+                    bootLine(`IMG ok ${url} natural=${img.naturalWidth}x${img.naturalHeight}`, "ok");
+                    resolve(img.naturalWidth > 0 && img.naturalHeight > 0);
+                  };
+                  img.onerror = () => {
+                    if (done) return;
+                    done = true;
+                    clearTimeout(t);
+                    bootLine(`IMG fail ${url}`, "bad");
+                    resolve(false);
+                  };
+
+                  img.src = url + (url.includes("?") ? "&" : "?") + "t=" + Date.now();
+                });
+              }
+
+              async function testAsset(url, timeoutMs = 1500) {
+                bootLine(`TEST start ${url}`, "dim");
+                const timeout = new Promise((resolve) =>
+                  setTimeout(() => resolve({ timeout: true }), timeoutMs)
+                );
+                const req = fetch(url, { cache: "no-store" })
+                  .then((r) => ({ r }))
+                  .catch((e) => ({ e }));
+                const out = await Promise.race([req, timeout]);
+
+                if (out.timeout) {
+                  bootLine(`TEST timeout ${url} (${timeoutMs}ms)`, "bad");
+                  return false;
+                }
+                if (out.e) {
+                  bootLine(`TEST fail ${url} -> ${String(out.e && out.e.name ? out.e.name : out.e)}`, "bad");
+                  return false;
+                }
+                const r = out.r;
+                const ct = r.headers.get("content-type");
+                bootLine(`TEST done  ${url} -> ${r.status} ct=${ct}`, r.ok ? "ok" : "bad");
+                return r.ok;
+              }
+
+              window.onerror = function (m, s, l, c, e) {
+                bootLine("JS ERROR:", "bad");
+                bootLine(String(e && e.stack ? e.stack : m), "bad");
+              };
+
+              async function probeBase(prefix) {
+                const url = prefix + "lib/lodash/dist/lodash.min.js";
+                try {
+                  const r = await fetch(url, { method: "GET", cache: "no-store" });
+                  return r.ok;
+                } catch (_) {
+                  return false;
+                }
+              }
+
+              function loadJS(src) {
+                return new Promise((resolve) => {
+                  const s = document.createElement("script");
+                  s.src = src;
+                  s.onload = () => resolve({ ok: true, src });
+                  s.onerror = () => resolve({ ok: false, src });
+                  document.head.appendChild(s);
+                });
+              }
+
+              function loadCSS(href) {
+                return new Promise((resolve) => {
+                  const l = document.createElement("link");
+                  l.rel = "stylesheet";
+                  l.href = href;
+                  l.onload = () => resolve({ ok: true, href });
+                  l.onerror = () => resolve({ ok: false, href });
+                  document.head.appendChild(l);
+                });
+              }
+
+              function hideBootLater(delayMs = 1500) {
+                setTimeout(() => {
+                  const el = document.getElementById("boot");
+                  if (el) el.remove();
+                }, delayMs);
+              }
+
+              function must(cond, msg){
+                if(!cond) throw new Error(msg);
+                bootLine("OK   " + msg, "ok");
+              }
+
+              async function boot() {
+                const candidates = ["./", "/", "/public/", "/www/"];
+                let BASE = "./";
+                for (const c of candidates) {
+                  bootLine("PROBE BASE: " + c, "dim");
+                  if (await probeBase(c)) { BASE = c; break; }
+                }
+                bootLine("BASE = " + BASE, "ok");
+
+                const cssList = [
+                  BASE + "lib/entry-tool/dist/entry-tool.css",
+                  BASE + "lib/entryjs/dist/entry.css",
+                  BASE + "lib/codemirror/codemirror.css",
+                  BASE + "overrides.css",
+                ];
+                for (const href of cssList) {
+                  const r = await loadCSS(href);
+                  bootLine((r.ok ? "OK   CSS  " : "MISS CSS ") + href, r.ok ? "ok" : "bad");
+                }
+
+                // locales (optional)
+                {
+                  const src = BASE + "js/ws/locales.js";
+                  const r = await loadJS(src);
+                  bootLine((r.ok ? "OK   JS   " : "MISS(opt) ") + src, r.ok ? "ok" : "dim");
+                }
+
+                const jsList = [
+                  BASE + "lib/lodash/dist/lodash.min.js",
+                  BASE + "lib/jquery/jquery.min.js",
+                  BASE + "lib/jquery-ui/ui/minified/jquery-ui.min.js",
+                  BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
+                  BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
+                  BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
+                  BASE + "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js", // optional
+                  BASE + "lib/velocity/velocity.min.js",
+                  BASE + "lib/codemirror/codemirror.js",
+                  BASE + "lib/codemirror/vim.js", // optional
+                  BASE + "lib/entry-tool/dist/entry-tool.js",
+                  BASE + "lib/entryjs/extern/lang/ko.js",
+                  BASE + "lib/entryjs/extern/util/static.js",
+                  BASE + "lib/entryjs/extern/util/handle.js",
+                  BASE + "lib/entryjs/extern/util/bignumber.min.js",
+                  BASE + "lib/module/legacy-video/index.js",
+                  BASE + "lib/external/sound/sound-editor.js", // optional
+                  BASE + "lib/entryjs/dist/entry.min.js",
+                  BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
+                ];
+
+                for (const src of jsList) {
+                  const optional =
+                    src.includes("flashaudioplugin") ||
+                    src.includes("/vim.js") ||
+                    src.includes("/ws/locales.js") ||
+                    src.includes("/external/sound/sound-editor.js");
+
+                  const r = await loadJS(src);
+
+                  if (!r.ok && src.includes("/external/sound/sound-editor.js")) {
+                    bootLine("MISS(opt) " + src, "dim");
+                    bootLine("PATCH EntrySoundEditor: stub applied (sound editor disabled)", "dim");
+                    if (!window.EntrySoundEditor) {
+                      window.EntrySoundEditor = {
+                        renderSoundEditor: function () {},
+                        registExportFunction: function () {},
+                        registImportFunction: function () {},
+                        init: function () {},
+                      };
+                    }
+                    continue;
+                  }
+
+                  bootLine(
+                    (r.ok ? "OK   JS   " : (optional ? "MISS(opt) " : "MISS     ")) + src,
+                    r.ok ? "ok" : (optional ? "dim" : "bad")
+                  );
+                }
+
+                // lodash 호환
+                if (window._) {
+                  if (typeof _.contains !== "function" && typeof _.includes === "function") _.contains = _.includes;
+                  if (typeof _.findWhere !== "function") {
+                    _.findWhere = function (arr, attrs) {
+                      return _.find(arr, function (o) {
+                        for (var k in attrs) if (o[k] !== attrs[k]) return false;
+                        return true;
+                      });
+                    };
+                  }
+                  bootLine("PATCH lodash: _.contains/_.findWhere ok", "dim");
+                }
+
+                if (window.EntryStatic) {
+                  EntryStatic.imagePath = BASE + "images/";
+                  EntryStatic.mediaPath = BASE + "media/";
+                  EntryStatic.uploadPath = BASE + "uploads/";
+                }
+
+                bootLine("HREF = " + location.href, "dim");
+
+                await testAsset(BASE + "images/_1x1.png", 1500);
+                await testAsset(BASE + "images/block_icon/ai_hand_icon.png", 1500);
+                await testImageDecode(BASE + "images/block_icon/ai_hand_icon.png");
+                bootLine("AFTER TESTS", "ok");
+
+                bootLine("_.memoize = " + (window._ ? typeof _.memoize : "N/A"), window._ ? "ok" : "bad");
+                bootLine("$.fn.jquery = " + (window.$ && $.fn ? $.fn.jquery : "N/A"), (window.$ && $.fn) ? "ok" : "bad");
+                bootLine("createjs = " + (typeof window.createjs), window.createjs ? "ok" : "bad");
+                bootLine("Lang = " + (typeof window.Lang), window.Lang ? "ok" : "bad");
+                bootLine("EntryTool = " + (typeof window.EntryTool), window.EntryTool ? "ok" : "bad");
+                bootLine("EntryVideoLegacy = " + (typeof window.EntryVideoLegacy), window.EntryVideoLegacy ? "ok" : "bad");
+                bootLine("EntryStatic = " + (typeof window.EntryStatic), window.EntryStatic ? "ok" : "bad");
+                bootLine("EntrySoundEditor = " + (typeof window.EntrySoundEditor), window.EntrySoundEditor ? "ok" : "dim");
+                bootLine("Entry.init = " + (window.Entry ? typeof window.Entry.init : "N/A"),
+                  (window.Entry && typeof window.Entry.init === "function") ? "ok" : "bad");
+
+                must(window._, "lodash(_)");
+                must(window.$, "jQuery($)");
+                must(window.createjs, "createjs");
+                must(window.Lang, "Lang");
+                must(window.EntryTool, "EntryTool");
+                must(window.EntryVideoLegacy, "EntryVideoLegacy");
+                must(window.EntryStatic, "EntryStatic");
+                must(window.EntrySoundEditor, "EntrySoundEditor (optional stub OK)");
+                must(window.Entry && typeof window.Entry.init === "function", "Entry.init");
+
+                bootLine("Starting Entry.init …", "dim");
+
+                Entry.init(document.getElementById("entryContainer"), {
+                  type: "workspace",
+                  libDir: "./lib",
+                  textCodingEnable: true
+                });
+
+                Entry.loadProject();
+
+                bootLine("BOOT OK: init+loadProject called, hiding logs…", "dim");
+                hideBootLater(1500);
+              }
+
+              document.addEventListener("DOMContentLoaded", () => {
+                boot().catch(e => {
+                  bootLine("Boot Error", "bad");
+                  bootLine(String(e && e.stack ? e.stack : e), "bad");
+                });
+              });
+            </script>
+          </head>
+
+          <body>
+            <div id="entryContainer"></div>
+            <div id="boot">Entry Offline Editor
+          Made by KKomaProgrammer
+          Loading…</div>
+          </body>
+          </html>
+          HTML
+
+          test -f www/index.html
+          echo "WROTE: www/index.html"
+          head -n 30 www/index.html || true
 
       # ✅ entry-offline 리소스 + 번들만 복사 (index.html 덮어쓰기 금지)
       - name: Copy entry-offline resources into www (keep index.html)
@@ -187,7 +492,7 @@ jobs:
           set -Eeuo pipefail
 
           test -f www/index.html
-          echo "OK: using existing www/index.html"
+          echo "OK: keep www/index.html"
 
           if [ -d "entry-offline/src/renderer/resources" ]; then
             mkdir -p "www/renderer/resources"
@@ -195,84 +500,36 @@ jobs:
             echo "COPIED: renderer/resources"
           fi
 
-          mkdir -p "www/renderer_build"
-          cp -a "entry-offline/src/renderer_build/." "www/renderer_build/"
-          echo "COPIED: entry-offline/src/renderer_build -> www/renderer_build"
+          # renderer_build 복사
+          if [ -d "entry-offline/src/renderer_build" ]; then
+            mkdir -p "www/renderer_build"
+            cp -a "entry-offline/src/renderer_build/." "www/renderer_build/"
+            echo "COPIED: entry-offline/src/renderer_build -> www/renderer_build"
+          else
+            echo "ERROR: entry-offline/src/renderer_build not found"
+            exit 1
+          fi
 
           echo "== verify bundles =="
           test -f "www/renderer_build/init.bundle.js"
           test -f "www/renderer_build/render.bundle.js"
 
-      # ✅✅ PNG 리인코딩: (1) 깨진/빈 파일 스킵 (2) tiny/깨짐은 1x1 투명 png로 대체 (3) 병렬
-      - name: Re-encode ALL PNGs for Android WebView (skip broken, replace tiny, parallel)
+      # ✅ www/images는 반드시 존재해야 함 (EntryStatic.imagePath가 ./images/를 봄)
+      - name: Ensure www/images exists (sync from entryjs images)
         run: |
           set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y imagemagick
+          mkdir -p www/images
 
-          # 1x1 transparent png 준비
-          python3 - <<'PY'
-          from PIL import Image
-          import os
-          os.makedirs("www/images", exist_ok=True)
-          out="www/images/__transparent_1x1.png"
-          if not os.path.exists(out):
-            img=Image.new("RGBA",(1,1),(0,0,0,0))
-            img.save(out, "PNG")
-          print("transparent:", out)
-          PY
+          if [ -d "www/lib/entryjs/images" ]; then
+            rsync -a --delete "www/lib/entryjs/images/" "www/images/"
+            echo "SYNC: www/lib/entryjs/images -> www/images"
+          else
+            echo "WARN: www/lib/entryjs/images not found; keeping existing www/images"
+          fi
 
-          export TRANSPARENT="www/images/__transparent_1x1.png"
-
-          # 파일 목록을 먼저 만들고 병렬 처리 (GitHub runner는 CPU 여유 있음)
-          find www -type f -name "*.png" -print0 > /tmp/pngs.bin
-
-          # 함수로 처리
-          bash -lc '
-            set -Eeuo pipefail
-            handle_one() {
-              f="$1"
-              # 빈 파일 스킵
-              if [ ! -s "$f" ]; then
-                echo "SKIP (empty): $f"
-                return 0
-              fi
-
-              # identify로 PNG 파싱 가능 여부/크기 확인
-              if ! identify -quiet "$f" >/dev/null 2>&1; then
-                echo "SKIP (broken): $f"
-                return 0
-              fi
-
-              # tiny(1x1 등)인데 깨져 보이는 경우가 있어, 1x1은 그냥 투명으로 통일해도 UI에는 영향 거의 없음
-              dims="$(identify -format "%wx%h" "$f" 2>/dev/null || true)"
-              if [ "$dims" = "1x1" ]; then
-                # 같은 파일이면 cp 에러 방지
-                if [ "$f" != "$TRANSPARENT" ]; then
-                  cp -f "$TRANSPARENT" "$f"
-                  echo "REPLACE tiny png: $f"
-                else
-                  echo "SKIP (transparent self): $f"
-                fi
-                return 0
-              fi
-
-              # 정상 png는 PNG32로 재인코딩
-              tmp="$f.tmp"
-              if convert "$f" -strip -define png:color-type=6 -define png:bit-depth=8 "PNG32:$tmp" 2>/dev/null; then
-                mv "$tmp" "$f"
-              else
-                rm -f "$tmp" || true
-                echo "SKIP (convert-fail): $f"
-              fi
-            }
-            export -f handle_one
-            export TRANSPARENT
-
-            # xargs 병렬
-            tr "\0" "\n" < /tmp/pngs.bin | \
-              xargs -I{} -P 6 bash -lc "handle_one \"{}\""
-          '
+          echo "== verify images =="
+          ls -la www/images | head -n 80 || true
+          test -f www/images/_1x1.png || true
 
       - name: Ensure Android platform
         run: |
@@ -287,7 +544,7 @@ jobs:
           npx cap sync android
           npx cap copy android
           du -sh android/app/src/main/assets/public || true
-          ls -la android/app/src/main/assets/public | head -n 80 || true
+          ls -la android/app/src/main/assets/public | head -n 120 || true
 
       - name: Allow cleartext localhost (for http scheme)
         run: |
@@ -320,13 +577,15 @@ jobs:
           echo "== renderer_build inside apk =="
           unzip -l "$APK" | grep -E "assets/public/renderer_build/(init|render)\.bundle\.js" || true
 
-          echo "== images folder exists inside apk? =="
-          unzip -l "$APK" | grep -E "assets/public/images/" | head -n 20 || true
           echo "== image count inside apk =="
           unzip -l "$APK" | grep -E "assets/public/images/" | wc -l || true
 
-          echo "== entry-tool inside apk =="
-          unzip -l "$APK" | grep -E "assets/public/lib/entry-tool/dist/entry-tool\.(js|css)" || true
+          echo "== index.html head (first 40 lines) =="
+          unzip -p "$APK" assets/public/index.html | head -n 40
+
+          echo "== verify entry-tool assets =="
+          unzip -l "$APK" | grep -F "assets/public/lib/entry-tool/dist/entry-tool.js" || true
+          unzip -l "$APK" | grep -F "assets/public/lib/entry-tool/dist/entry-tool.css" || true
 
       - name: Cleanup old artifacts (keep latest 1)
         uses: actions/github-script@v7
