@@ -22,7 +22,7 @@ jobs:
         with:
           node-version: "18"
 
-      # ✅ (추가) Yarn/Gradle 캐시
+      # ✅ Yarn/Gradle 캐시
       - name: Cache Yarn
         uses: actions/cache@v4
         with:
@@ -58,7 +58,7 @@ jobs:
           echo "== find main.html =="
           find entry-offline -type f -name "main.html" -print | head -n 50 || true
 
-      # ✅ 추가: Linux(case-sensitive)에서 ./components/Index import 깨지는 문제 자동 보정
+      # ✅ Linux(case-sensitive)에서 ./components/Index import 깨지는 문제 자동 보정
       - name: Patch entry-offline import casing (Index -> index)
         run: |
           set -Eeuo pipefail
@@ -89,8 +89,12 @@ jobs:
           ls -la entry-offline/src/renderer/components | head -n 200 || true
           test ! -f entry-offline/src/renderer/components/Index.tsx || (echo "Index.tsx still exists" && exit 1)
 
-      # ✅ entry-offline renderer_build 생성 시도 (Node18 OpenSSL 이슈 대응 포함)
-      - name: Build entry-offline renderer bundles (try)
+      # ✅ entry-offline renderer_build 생성
+      #   - Node18에서 webpack4/legacy hash면 ERR_OSSL_EVP_UNSUPPORTED가 뜰 수 있어
+      #     openssl legacy provider로 우회
+      - name: Build entry-offline renderer bundles
+        env:
+          NODE_OPTIONS: --openssl-legacy-provider
         run: |
           set -Eeuo pipefail
           corepack enable || true
@@ -98,21 +102,26 @@ jobs:
           echo "== yarn install (entry-offline) =="
           yarn --cwd entry-offline install --frozen-lockfile || yarn --cwd entry-offline install
 
-          echo "== try webpack build with openssl legacy provider (Node18 fix) =="
+          echo "== try build commands (entry-offline) =="
           set +e
-          NODE_OPTIONS="--openssl-legacy-provider" yarn --cwd entry-offline webpack
-          code=$?
+          for cmd in \
+            "yarn --cwd entry-offline webpack" \
+            "yarn --cwd entry-offline dist"
+          do
+            echo "TRY: $cmd"
+            $cmd
+            code=$?
+            if [ $code -eq 0 ]; then
+              echo "OK: build succeeded with: $cmd"
+              break
+            else
+              echo "FAIL($code): $cmd"
+            fi
+          done
           set -e
-
-          if [ $code -ne 0 ]; then
-            echo "WARN: entry-offline webpack build failed, but renderer_build might already exist in repo."
-          fi
 
           echo "== find renderer_build output =="
           find entry-offline -maxdepth 8 -type d -name "renderer_build" -print | head -n 20 || true
-          find entry-offline -maxdepth 10 -type f -name "init.bundle.js" -print | head -n 20 || true
-          find entry-offline -maxdepth 10 -type f -name "render.bundle.js" -print | head -n 20 || true
-
           test -f entry-offline/src/renderer_build/init.bundle.js
           test -f entry-offline/src/renderer_build/render.bundle.js
 
@@ -122,41 +131,55 @@ jobs:
           bash scripts/fetch_entry_assets.sh
           du -sh www || true
           ls -la www | head -n 80 || true
-          - name: Replace broken PNGs with 1x1 transparent fallback (safe)
-          sudo apt-get update -y
-          sudo apt-get install -y imagemagick
+          test -f www/index.html
 
-          # 1x1 투명 PNG 생성
-          mkdir -p www/images
-          convert -size 1x1 xc:none PNG32:www/images/__transparent_1x1.png
-
-          # 깨진 png(너무 작은 파일) -> 투명 1x1로 교체
-          find www -type f -name "*.png" -size -200c ! -path "*/__transparent_1x1.png" -print0 \
-            | while IFS= read -r -d '' f; do
-                echo "REPLACE broken tiny png: $f"
-                cp -f "www/images/__transparent_1x1.png" "$f"
-              done
-
-      # ✅✅ 핵심: ./images (루트) 가 생겼으면 www/images 로 넣어 “www안에 images 없음” 해결
-      - name: Ensure images folder is under www/images
+      # ✅✅ 핵심: www/images 가 없으면 ./images 는 당연히 안 보임
+      # entryjs 이미지가 보통 www/lib/entryjs/images or www/lib/entry-js/images 아래로만 내려오는 케이스가 많음
+      - name: Ensure www/images exists (sync from entryjs images)
         run: |
           set -Eeuo pipefail
+          mkdir -p www/images
 
-          if [ -d "./images" ] && [ ! -d "www/images" ]; then
-            echo "FOUND ./images (root). Copy -> www/images"
-            mkdir -p www/images
-            cp -a ./images/. www/images/
+          if [ -d "www/lib/entryjs/images" ]; then
+            rsync -a --delete "www/lib/entryjs/images/" "www/images/"
+            echo "SYNC: www/lib/entryjs/images -> www/images"
+          elif [ -d "www/lib/entry-js/images" ]; then
+            rsync -a --delete "www/lib/entry-js/images/" "www/images/"
+            echo "SYNC: www/lib/entry-js/images -> www/images"
+          else
+            echo "WARN: no entryjs images folder found under www/lib/"
           fi
 
-          if [ -d "./images" ] && [ -d "www/images" ]; then
-            # 둘 다 있으면 덮어쓰기 형태로 병합 (누락 방지)
-            echo "MERGE ./images -> www/images"
-            cp -a ./images/. www/images/ || true
-          fi
+          echo "== verify images =="
+          ls -la www/images | head -n 50 || true
+          test -f www/images/_1x1.png || true
 
-          echo "== www/images top =="
-          ls -la www/images | head -n 80 || true
-          test -d www/images || (echo "ERROR: www/images still missing" && exit 1)
+      # ✅ entry-tool이 필요한 경우(네가 말한 repo)
+      # index.html에서 lib/entry-tool/dist/entry-tool.(js|css) 를 로딩하므로
+      # www/lib/entry-tool/dist/ 아래에 실제 파일을 만들어야 함. 1
+      - name: Build entry-tool and copy into www/lib/entry-tool
+        run: |
+          set -Eeuo pipefail
+          rm -rf entry-tool || true
+          git clone --depth 1 https://github.com/entrylabs/entry-tool.git entry-tool
+
+          echo "== entry-tool build scripts =="
+          cat entry-tool/package.json | head -n 60 || true
+
+          pushd entry-tool >/dev/null
+          npm ci || npm install
+          npm run build
+          popd >/dev/null
+
+          mkdir -p www/lib/entry-tool
+          rm -rf www/lib/entry-tool/dist www/lib/entry-tool/lib || true
+          cp -a entry-tool/dist www/lib/entry-tool/dist
+          cp -a entry-tool/lib  www/lib/entry-tool/lib
+
+          echo "== verify entry-tool =="
+          ls -la www/lib/entry-tool/dist | head -n 50 || true
+          test -f www/lib/entry-tool/dist/entry-tool.js
+          test -f www/lib/entry-tool/dist/entry-tool.css
 
       # ✅ entry-offline 리소스 + 번들만 복사 (index.html 덮어쓰기 금지)
       - name: Copy entry-offline resources into www (keep index.html)
@@ -172,142 +195,84 @@ jobs:
             echo "COPIED: renderer/resources"
           fi
 
-          RB="$(find entry-offline -maxdepth 10 -type d -name "renderer_build" | head -n 1 || true)"
-          if [ -n "$RB" ] && [ -d "$RB" ]; then
-            mkdir -p "www/renderer_build"
-            cp -a "$RB/." "www/renderer_build/"
-            echo "COPIED: $RB -> www/renderer_build"
-          else
-            echo "ERROR: renderer_build not found"
-            exit 1
-          fi
+          mkdir -p "www/renderer_build"
+          cp -a "entry-offline/src/renderer_build/." "www/renderer_build/"
+          echo "COPIED: entry-offline/src/renderer_build -> www/renderer_build"
 
           echo "== verify bundles =="
           test -f "www/renderer_build/init.bundle.js"
           test -f "www/renderer_build/render.bundle.js"
 
-      # ✅ 존재하는 entry 이미지 경로 확인(레포마다 다름)
-      - name: Debug list candidate entry image dirs
-        run: |
-          set -Eeuo pipefail
-          echo "== candidate dirs =="
-          for d in \
-            "www/lib/@entrylabs/entry/images" \
-            "www/lib/entry/images" \
-            "www/lib/entry-js/images" \
-            "www/lib/entryjs/images" \
-            "www/lib/entry-js/dist/images" \
-            "www/images"
-          do
-            if [ -d "$d" ]; then
-              echo "FOUND: $d"
-              ls -la "$d" | head -n 20 || true
-            else
-              echo "MISS : $d"
-            fi
-          done
-
-      # ✅✅ SVG -> PNG 변환 (존재하는 폴더만)
-      - name: Convert SVG to PNG (auto-detect dirs)
-        run: |
-          set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y librsvg2-bin
-
-          dirs=()
-          for d in \
-            "www/images" \
-            "www/lib/@entrylabs/entry/images" \
-            "www/lib/entry/images" \
-            "www/lib/entry-js/images" \
-            "www/lib/entryjs/images"
-          do
-            if [ -d "$d" ]; then dirs+=("$d"); fi
-          done
-
-          echo "SVG scan dirs: ${dirs[*]:-(none)}"
-          if [ "${#dirs[@]}" -eq 0 ]; then
-            echo "No svg dirs found; skip"
-            exit 0
-          fi
-
-          for d in "${dirs[@]}"; do
-            find "$d" -type f -name "*.svg" -print0 | while IFS= read -r -d '' f; do
-              out="${f%.svg}.png"
-              if [ ! -f "$out" ]; then
-                rsvg-convert "$f" -o "$out" || true
-              fi
-            done
-          done
-
-          echo "SVG total:"; find "${dirs[@]}" -type f -name "*.svg" | wc -l || true
-          echo "PNG total:"; find "${dirs[@]}" -type f -name "*.png" | wc -l || true
-
-      # ✅✅✅ .svg 참조를 전부 .png로 변경 (병렬 멀티프로세스)
-      - name: Rewrite ALL .svg refs to .png in www (js/css/html) - parallel
-        run: |
-          set -Eeuo pipefail
-          python3 - <<'PY'
-          import os, re
-          from multiprocessing import Pool, cpu_count
-
-          ROOT="www"
-          exts=(".js",".css",".html")
-
-          # 안전하게: "경로.svg" -> "경로.png" (쿼리/따옴표/괄호/공백 등 경계 처리)
-          pat = re.compile(r'((?:https?://[^"\'\)\s]+/)?(?:/|\./|\.\./)?[A-Za-z0-9_\-./]+)\.svg(\b|[?#"\'\)\s])', re.I)
-
-          files=[]
-          for dp,_,fns in os.walk(ROOT):
-            for fn in fns:
-              if fn.endswith(exts):
-                files.append(os.path.join(dp,fn))
-
-          def work(p):
-            try:
-              b=open(p,"rb").read()
-            except:
-              return (p,0,0)
-            s=b.decode("utf-8","ignore")
-            ns, n = pat.subn(r'\1.png\2', s)
-            if n:
-              open(p,"wb").write(ns.encode("utf-8"))
-              return (p,1,n)
-            return (p,0,0)
-
-          P = min(max(cpu_count()-1,1), 8)  # 과병렬 방지
-          changed_files=0
-          changed_refs=0
-          with Pool(P) as pool:
-            for _,fchg,n in pool.imap_unordered(work, files, chunksize=50):
-              changed_files += fchg
-              changed_refs += n
-
-          print(f"[rewrite-svg-parallel] files_changed={changed_files} refs_changed={changed_refs} scanned_files={len(files)} procs={P}")
-          PY
-
-      # ✅✅✅✅ PNG 재인코딩 (broken skip + 병렬 + 과병렬 방지)
-      - name: Re-encode ALL PNGs for Android WebView (skip broken, parallel)
+      # ✅✅ PNG 리인코딩: (1) 깨진/빈 파일 스킵 (2) tiny/깨짐은 1x1 투명 png로 대체 (3) 병렬
+      - name: Re-encode ALL PNGs for Android WebView (skip broken, replace tiny, parallel)
         run: |
           set -Eeuo pipefail
           sudo apt-get update -y
           sudo apt-get install -y imagemagick
 
-          # 병렬 너무 크게 잡으면 I/O 병목으로 더 느려질 수 있음 → 4~8 권장
-          P="$(nproc)"
-          if [ "$P" -gt 8 ]; then P=8; fi
+          # 1x1 transparent png 준비
+          python3 - <<'PY'
+          from PIL import Image
+          import os
+          os.makedirs("www/images", exist_ok=True)
+          out="www/images/__transparent_1x1.png"
+          if not os.path.exists(out):
+            img=Image.new("RGBA",(1,1),(0,0,0,0))
+            img.save(out, "PNG")
+          print("transparent:", out)
+          PY
 
-          # convert 자체 멀티스레드까지 합쳐지면 과부하 → 제한
-          export MAGICK_THREAD_LIMIT=1
+          export TRANSPARENT="www/images/__transparent_1x1.png"
 
-          find www -type f -name "*.png" -size +0c -print0 \
-            | xargs -0 -n 1 -P "$P" bash -lc '
-                f="$1"
-                tmp="${f}.tmp"
-                convert "$f" -strip -define png:color-type=6 -define png:bit-depth=8 PNG32:"$tmp" 2>/dev/null \
-                  && mv "$tmp" "$f" \
-                  || { rm -f "$tmp"; echo "SKIP (broken): $f"; }
-              ' _
+          # 파일 목록을 먼저 만들고 병렬 처리 (GitHub runner는 CPU 여유 있음)
+          find www -type f -name "*.png" -print0 > /tmp/pngs.bin
+
+          # 함수로 처리
+          bash -lc '
+            set -Eeuo pipefail
+            handle_one() {
+              f="$1"
+              # 빈 파일 스킵
+              if [ ! -s "$f" ]; then
+                echo "SKIP (empty): $f"
+                return 0
+              fi
+
+              # identify로 PNG 파싱 가능 여부/크기 확인
+              if ! identify -quiet "$f" >/dev/null 2>&1; then
+                echo "SKIP (broken): $f"
+                return 0
+              fi
+
+              # tiny(1x1 등)인데 깨져 보이는 경우가 있어, 1x1은 그냥 투명으로 통일해도 UI에는 영향 거의 없음
+              dims="$(identify -format "%wx%h" "$f" 2>/dev/null || true)"
+              if [ "$dims" = "1x1" ]; then
+                # 같은 파일이면 cp 에러 방지
+                if [ "$f" != "$TRANSPARENT" ]; then
+                  cp -f "$TRANSPARENT" "$f"
+                  echo "REPLACE tiny png: $f"
+                else
+                  echo "SKIP (transparent self): $f"
+                fi
+                return 0
+              fi
+
+              # 정상 png는 PNG32로 재인코딩
+              tmp="$f.tmp"
+              if convert "$f" -strip -define png:color-type=6 -define png:bit-depth=8 "PNG32:$tmp" 2>/dev/null; then
+                mv "$tmp" "$f"
+              else
+                rm -f "$tmp" || true
+                echo "SKIP (convert-fail): $f"
+              fi
+            }
+            export -f handle_one
+            export TRANSPARENT
+
+            # xargs 병렬
+            tr "\0" "\n" < /tmp/pngs.bin | \
+              xargs -I{} -P 6 bash -lc "handle_one \"{}\""
+          '
 
       - name: Ensure Android platform
         run: |
@@ -323,10 +288,6 @@ jobs:
           npx cap copy android
           du -sh android/app/src/main/assets/public || true
           ls -la android/app/src/main/assets/public | head -n 80 || true
-          echo "== check images in android assets =="
-          ls -la android/app/src/main/assets/public/images | head -n 40 || true
-          echo "== check lib in android assets =="
-          ls -la android/app/src/main/assets/public/lib | head -n 40 || true
 
       - name: Allow cleartext localhost (for http scheme)
         run: |
@@ -359,14 +320,13 @@ jobs:
           echo "== renderer_build inside apk =="
           unzip -l "$APK" | grep -E "assets/public/renderer_build/(init|render)\.bundle\.js" || true
 
+          echo "== images folder exists inside apk? =="
+          unzip -l "$APK" | grep -E "assets/public/images/" | head -n 20 || true
           echo "== image count inside apk =="
           unzip -l "$APK" | grep -E "assets/public/images/" | wc -l || true
 
-          echo "== png count inside apk =="
-          unzip -l "$APK" | grep -E "\.png$" | wc -l || true
-
-          echo "== sample: ai_hand_icon (svg/png) in apk =="
-          unzip -l "$APK" | grep -E "assets/public/images/block_icon/ai_hand_icon\.(svg|png)" || true
+          echo "== entry-tool inside apk =="
+          unzip -l "$APK" | grep -E "assets/public/lib/entry-tool/dist/entry-tool\.(js|css)" || true
 
       - name: Cleanup old artifacts (keep latest 1)
         uses: actions/github-script@v7
