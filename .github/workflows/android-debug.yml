@@ -22,6 +22,7 @@ jobs:
         with:
           node-version: "18"
 
+      # ✅ Yarn/Gradle 캐시
       - name: Cache Yarn
         uses: actions/cache@v4
         with:
@@ -57,6 +58,7 @@ jobs:
           echo "== find main.html =="
           find entry-offline -type f -name "main.html" -print | head -n 50 || true
 
+      # ✅ Linux(case-sensitive)에서 ./components/Index import 깨지는 문제 자동 보정
       - name: Patch entry-offline import casing (Index -> index)
         run: |
           set -Eeuo pipefail
@@ -87,6 +89,7 @@ jobs:
           ls -la entry-offline/src/renderer/components | head -n 200 || true
           test ! -f entry-offline/src/renderer/components/Index.tsx || (echo "Index.tsx still exists" && exit 1)
 
+      # ✅ entry-offline renderer_build 실제 생성
       - name: Build entry-offline renderer bundles
         run: |
           set -Eeuo pipefail
@@ -133,6 +136,7 @@ jobs:
           ls -la www | head -n 80 || true
           test -f www/index.html
 
+      # ✅ entry-offline 리소스 + 번들만 복사 (index.html 덮어쓰기 금지)
       - name: Copy entry-offline resources into www (keep index.html)
         run: |
           set -Eeuo pipefail
@@ -155,223 +159,156 @@ jobs:
             echo "ERROR: renderer_build not found"
             exit 1
           fi
-
           echo "== verify bundles =="
           test -f "www/renderer_build/init.bundle.js"
           test -f "www/renderer_build/render.bundle.js"
 
-      - name: Debug list entry media files in www
-        run: |
-          set -Eeuo pipefail
-          echo "== entry media svg/png in www =="
-          ls -la "www/lib/@entrylabs/entry/images/media" | head -n 200 || true
-          echo "== grep entrybot1 in www =="
-          find "www/lib/@entrylabs/entry/images/media" -maxdepth 1 -type f | grep -i entrybot1 || true
-
-      - name: Fix missing images paths (case/legacy) in www
+      # ✅✅✅ 핵심: www/images 가 없으면 만들어서 lib 내부 images를 미러링
+      - name: Ensure www/images exists (mirror from lib if needed)
         run: |
           set -Eeuo pipefail
           python3 - <<'PY'
-          import os, re, shutil
-
-          ROOT = "www"
-          img_root = os.path.join(ROOT, "images")
-          img_index = {}
-          if os.path.isdir(img_root):
-            for dirpath, _, filenames in os.walk(img_root):
-              for fn in filenames:
-                rel = os.path.relpath(os.path.join(dirpath, fn), ROOT).replace("\\", "/")
-                img_index[rel.lower()] = rel
-          else:
-            print("[fix-images] no www/images folder; skip")
-            raise SystemExit(0)
-
-          pat = re.compile(r'(?:(?:/|\.{0,2}/)images/)[A-Za-z0-9_\-./]+')
-          refs = set()
-
-          for dirpath, _, filenames in os.walk(ROOT):
-            for fn in filenames:
-              if not (fn.endswith(".js") or fn.endswith(".css") or fn.endswith(".html")):
-                continue
-              p = os.path.join(dirpath, fn)
-              try:
-                data = open(p, "rb").read()
-              except:
-                continue
-              s = data.decode("utf-8", "ignore")
-              for m in pat.findall(s):
-                u = m.replace("\\", "/")
-                u = re.sub(r'^(?:/|\./|\.\./)+', '', u)
-                if u.startswith("images/"):
-                  refs.add(u)
-
-          made = 0
-          missing = 0
-          for ref in sorted(refs):
-            dst = os.path.join(ROOT, ref)
-            if os.path.exists(dst):
-              continue
-            src_rel = img_index.get(ref.lower())
-            if not src_rel:
-              missing += 1
-              continue
-            src = os.path.join(ROOT, src_rel)
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            shutil.copy2(src, dst)
-            made += 1
-
-          print(f"[fix-images] refs={len(refs)} made={made} still-missing={missing}")
-
-          icon_dir = os.path.join(ROOT, "images", "icon")
-          os.makedirs(icon_dir, exist_ok=True)
-
-          src_blk = os.path.join(ROOT, "images", "block_icon")
-          dst_blk = os.path.join(ROOT, "images", "icon", "block_icon")
-          if os.path.isdir(src_blk) and not os.path.isdir(dst_blk):
-            shutil.copytree(src_blk, dst_blk)
-            print("[fix-images] copied block_icon -> images/icon/block_icon")
-
-          chk = os.path.join(ROOT, "images", "icon", "block_icon", "ai_hand_icon.svg")
-          print("[fix-images] check:", chk, "OK" if os.path.exists(chk) else "MISS")
-          PY
-
-      # ✅ 아이콘류는 PNG가 "너무 커지는" 걸 막기 위해 -w 캡 적용
-      - name: Make PNG fallback for SVG icons (block_icon etc.)
-        run: |
-          set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y librsvg2-bin
-
-          if [ -d "www/images/block_icon" ]; then
-            find www/images/block_icon -type f -name '*.svg' -print0 | while IFS= read -r -d '' f; do
-              out="${f%.svg}.png"
-              if [ ! -f "$out" ]; then
-                rsvg-convert -w 256 "$f" -o "$out" || true
-              fi
-            done
-          fi
-
-          if [ -d "www/images/icon/block_icon" ]; then
-            find www/images/icon/block_icon -type f -name '*.svg' -print0 | while IFS= read -r -d '' f; do
-              out="${f%.svg}.png"
-              if [ ! -f "$out" ]; then
-                rsvg-convert -w 256 "$f" -o "$out" || true
-              fi
-            done
-          fi
-
-          echo "PNG fallback count:"
-          find www/images -type f -name '*.png' | wc -l || true
-
-      # ✅ @entrylabs/entry 아래는 리소스가 다양하니 조금 더 큰 캡(512) 권장
-      - name: Convert @entrylabs entry SVG to PNG (for Android Canvas)
-        run: |
-          set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y librsvg2-bin
-
-          if [ -d "www/lib/@entrylabs/entry/images" ]; then
-            find "www/lib/@entrylabs/entry/images" -type f -name "*.svg" -print0 | while IFS= read -r -d '' f; do
-              out="${f%.svg}.png"
-              if [ ! -f "$out" ]; then
-                rsvg-convert -w 512 "$f" -o "$out" || true
-              fi
-            done
-          fi
-
-          echo "entry lib SVG count:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.svg" | wc -l || true
-          echo "entry lib PNG count:"; find "www/lib/@entrylabs/entry/images" -type f -name "*.png" | wc -l || true
-
-      # ✅✅✅ 핵심: (병렬) www 전체에서 svg 참조를 png로 "문자열 자체" 치환
-      - name: Rewrite ALL SVG refs to PNG (parallel)
-        run: |
-          set -Eeuo pipefail
-          python3 - <<'PY'
-          import os, re, sys
-          from concurrent.futures import ThreadPoolExecutor, as_completed
+          import os, shutil
 
           ROOT="www"
-          exts=(".js",".css",".html")
+          img=os.path.join(ROOT,"images")
+          if os.path.isdir(img) and os.listdir(img):
+            print("[ensure-images] www/images already exists and not empty")
+          else:
+            # 후보: 실제로 많이 나오는 경로들
+            candidates = [
+              os.path.join(ROOT,"lib","entryjs","images"),
+              os.path.join(ROOT,"lib","entry-js","images"),
+              os.path.join(ROOT,"lib","entry","images"),
+              os.path.join(ROOT,"lib","@entrylabs","entry","images"),
+            ]
 
-          # .svg, .SVG + ( ?v=..., #... )까지 처리
-          # - /images/...svg
-          # - /lib/@entrylabs/entry/images/...svg
-          # - 상대경로 ./images/...svg 등
-          pat = re.compile(
-            r'((?:https?://[^"\')\s]+/)?'              # optional absolute base
-            r'(?:/|\./|\.\./)?'                        # optional leading
-            r'(?:lib/@entrylabs/entry/images|images)'  # root
-            r'/[A-Za-z0-9_\-./]+?)'                    # path
-            r'\.svg'                                   # ext
-            r'(?=($|[?#"\'\)\s]))',                    # boundary (keep query/hash)
-            flags=re.IGNORECASE
-          )
+            src=None
+            for c in candidates:
+              if os.path.isdir(c) and any(os.scandir(c)):
+                src=c
+                break
 
-          def handle_file(p):
-            try:
-              b = open(p, "rb").read()
-              s = b.decode("utf-8", "ignore")
-            except:
-              return (p, 0, False)
+            if not src:
+              # 마지막 수단: www/lib 아래에서 images 폴더 하나라도 찾기
+              for dirpath, dirnames, _ in os.walk(os.path.join(ROOT,"lib")):
+                if os.path.basename(dirpath) == "images":
+                  if any(os.scandir(dirpath)):
+                    src=dirpath
+                    break
 
-            ns, n = pat.subn(r'\1.png', s)
-            if n:
-              open(p, "wb").write(ns.encode("utf-8"))
-              return (p, n, True)
-            return (p, 0, False)
+            os.makedirs(img, exist_ok=True)
 
-          files=[]
-          for dp,_,fns in os.walk(ROOT):
-            for fn in fns:
-              if fn.endswith(exts):
-                files.append(os.path.join(dp, fn))
+            if src:
+              print("[ensure-images] MIRROR:", src, "->", img)
+              # copy contents (not overwrite existing files)
+              for dp, _, fns in os.walk(src):
+                rel=os.path.relpath(dp, src)
+                dst=os.path.join(img, rel) if rel != "." else img
+                os.makedirs(dst, exist_ok=True)
+                for fn in fns:
+                  s=os.path.join(dp, fn)
+                  d=os.path.join(dst, fn)
+                  if not os.path.exists(d):
+                    shutil.copy2(s, d)
+            else:
+              print("[ensure-images] WARNING: no source images dir found under www/lib")
 
-          changed_files=0
-          changed_refs=0
+          # 1x1 픽셀(테스트용) 없으면 생성
+          one=os.path.join(img,"_1x1.png")
+          if not os.path.exists(one):
+            # 가장 단순한 1x1 PNG 바이너리
+            data = bytes.fromhex(
+              "89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C489"
+              "0000000A49444154789C6360000002000154A24F5D0000000049454E44AE426082"
+            )
+            with open(one,"wb") as f:
+              f.write(data)
+            print("[ensure-images] wrote images/_1x1.png")
 
-          # 병렬(스레드) — 파일 I/O + 정규식 치환은 스레드가 잘 먹습니다
-          workers = min(32, (os.cpu_count() or 4) * 2)
-          with ThreadPoolExecutor(max_workers=workers) as ex:
-            futs=[ex.submit(handle_file,p) for p in files]
-            for f in as_completed(futs):
-              p, n, ch = f.result()
-              if ch:
-                changed_files += 1
-                changed_refs += n
-
-          print(f"[rewrite-svg->png] workers={workers} files={len(files)} files_changed={changed_files} refs_changed={changed_refs}")
+          print("[ensure-images] images exists:", os.path.isdir(img))
+          print("[ensure-images] images file sample:")
+          for i, name in enumerate(sorted(os.listdir(img))[:30]):
+            print(" -", name)
           PY
 
-      # ✅ 남은 .svg 참조가 있으면 바로 보여주기 (원인 파악용)
-      - name: Verify no .svg refs remain (show first 50)
+      # (선택) 구조 확인용
+      - name: Debug: locate image dirs under www/lib
         run: |
           set -Eeuo pipefail
-          echo "== remaining .svg references in www (first 50) =="
-          set +e
-          grep -RIn --exclude-dir=node_modules --exclude='*.map' '\.svg([?#]|["'\'')[:space:]]|$)' www | head -n 50
-          exit 0
+          echo "== top lib dirs =="
+          ls -la www/lib | head -n 200 || true
+          echo "== image dirs (depth 6) =="
+          find www/lib -maxdepth 6 -type d -name images -print || true
+          echo "== root images exists? =="
+          ls -la www/images | head -n 80 || true
 
-      # ✅✅✅ PNG 재인코딩: 깨진/비정상 PNG는 스킵
-      - name: Re-encode ALL PNGs for Android WebView
+      # ✅✅ SVG -> PNG (www 전체)
+      - name: Convert ALL SVG to PNG in www (robust)
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y librsvg2-bin
+
+          find www -type f -name "*.svg" -print0 | while IFS= read -r -d '' f; do
+            out="${f%.svg}.png"
+            if [ ! -f "$out" ]; then
+              rsvg-convert "$f" -o "$out" || true
+            fi
+          done
+
+          echo "SVG count:"; find www -type f -name "*.svg" | wc -l || true
+          echo "PNG count:"; find www -type f -name "*.png" | wc -l || true
+
+      # ✅✅ 모든 .svg 참조를 .png로 치환 (경로 상관없이)
+      - name: Rewrite ALL .svg refs to .png in www (js/css/html)
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import os, re
+          ROOT="www"
+          exts=(".js",".css",".html")
+          pat = re.compile(r'([A-Za-z0-9_\-./]+)\.svg(\b|[?#"\'\)\s])', re.IGNORECASE)
+
+          changed=0
+          files=0
+          for dp,_,fns in os.walk(ROOT):
+            for fn in fns:
+              if not fn.endswith(exts):
+                continue
+              p=os.path.join(dp,fn)
+              s=open(p,"rb").read().decode("utf-8","ignore")
+              ns, n = pat.subn(r'\1.png\2', s)
+              if n:
+                open(p,"wb").write(ns.encode("utf-8"))
+                changed += n
+                files += 1
+
+          print(f"[rewrite-svg->png] files_changed={files} refs_changed={changed}")
+          PY
+
+      # ✅✅✅ PNG 재인코딩 (병렬 + 깨진 PNG는 스킵)
+      - name: Re-encode ALL PNGs for Android WebView (parallel, skip broken)
         run: |
           set -Eeuo pipefail
           sudo apt-get update -y
           sudo apt-get install -y imagemagick
 
-          find www -type f -name "*.png" -print0 | while IFS= read -r -d '' f; do
-            if [ ! -s "$f" ]; then
-              echo "SKIP (empty): $f"
-              continue
-            fi
-
-            convert "$f" -strip -define png:color-type=6 -define png:bit-depth=8 PNG32:"$f".tmp 2>/dev/null || {
-              echo "SKIP (broken): $f"
-              rm -f "$f".tmp || true
-              continue
-            }
-
-            mv "$f".tmp "$f"
-          done
+          # 병렬 처리(4개)
+          find www -type f -name "*.png" -print0 \
+            | xargs -0 -n 1 -P 4 bash -lc '
+                f="$0"
+                if [ ! -s "$f" ]; then
+                  echo "SKIP (empty): $f"
+                  exit 0
+                fi
+                convert "$f" -strip -define png:color-type=6 -define png:bit-depth=8 PNG32:"$f".tmp 2>/dev/null || {
+                  echo "SKIP (broken): $f"
+                  rm -f "$f".tmp || true
+                  exit 0
+                }
+                mv "$f".tmp "$f"
+              '
 
       - name: Ensure Android platform
         run: |
@@ -387,6 +324,8 @@ jobs:
           npx cap copy android
           du -sh android/app/src/main/assets/public || true
           ls -la android/app/src/main/assets/public | head -n 80 || true
+          echo "== ensure images folder in android assets =="
+          ls -la android/app/src/main/assets/public/images | head -n 80 || true
 
       - name: Allow cleartext localhost (for http scheme)
         run: |
@@ -422,18 +361,11 @@ jobs:
           echo "== image count inside apk =="
           unzip -l "$APK" | grep -E "assets/public/images/" | wc -l || true
 
-          echo "== sample nested file inside apk =="
-          unzip -l "$APK" | grep -F "assets/public/images/block_icon/ai_hand_icon.svg" || true
-          echo "== test func_icon.svg =="
-          unzip -l "$APK" | grep -F "assets/public/images/block_icon/func_icon.svg" || true
+          echo "== check _1x1.png inside apk =="
+          unzip -l "$APK" | grep -F "assets/public/images/_1x1.png" || true
 
-          echo "== index.html head (first 40 lines) =="
-          unzip -p "$APK" assets/public/index.html | head -n 40
-
-          echo "== entrybot1 png in apk =="
-          unzip -l "$APK" | grep -F "assets/public/lib/@entrylabs/entry/images/media/entrybot1.png" || true
-          echo "== entrybot1 svg/png in apk =="
-          unzip -l "$APK" | grep -E "assets/public/lib/@entrylabs/entry/images/media/entrybot1\.(svg|png)" || true
+          echo "== sample block icon =="
+          unzip -l "$APK" | grep -E "assets/public/images/block_icon/ai_hand_icon\.(png|svg)" || true
 
       - name: Cleanup old artifacts (keep latest 1)
         uses: actions/github-script@v7
