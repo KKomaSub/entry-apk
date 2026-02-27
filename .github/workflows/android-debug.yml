@@ -22,7 +22,6 @@ jobs:
         with:
           node-version: "18"
 
-      # ✅ Yarn/Gradle 캐시
       - name: Cache Yarn
         uses: actions/cache@v4
         with:
@@ -55,13 +54,6 @@ jobs:
           rm -rf entry-offline || true
           git clone --depth 1 https://github.com/entrylabs/entry-offline.git entry-offline
 
-          echo "== entry-offline top =="
-          ls -la entry-offline | head -n 50 || true
-
-          echo "== find main.html =="
-          find entry-offline -type f -name "main.html" -print | head -n 50 || true
-
-      # ✅ Linux(case-sensitive)에서 ./components/Index import 깨지는 문제 자동 보정
       - name: Patch entry-offline import casing (Index -> index)
         run: |
           set -Eeuo pipefail
@@ -75,68 +67,30 @@ jobs:
           if [ -f "$TARGET" ]; then
             sed -i 's#\./components/Index#./components/index#g' "$TARGET"
             sed -i 's#\./components/Index\.tsx#./components/index.tsx#g' "$TARGET" || true
-            echo "PATCHED: $TARGET"
-            grep -n "components/index" "$TARGET" || true
           else
             echo "ERROR: not found: $TARGET"
             exit 1
           fi
 
-          grep -RIn --exclude-dir=node_modules "components/Index" entry-offline/src/renderer || true
-          if grep -RIn --exclude-dir=node_modules "components/Index" entry-offline/src/renderer >/dev/null 2>&1; then
-            find entry-offline/src/renderer -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' \) -print0 \
-              | xargs -0 sed -i 's#\./components/Index#./components/index#g'
-            echo "PATCHED: renderer sources (bulk)"
-          fi
-
-          ls -la entry-offline/src/renderer/components | head -n 200 || true
-          test ! -f entry-offline/src/renderer/components/Index.tsx || (echo "Index.tsx still exists" && exit 1)
-
-      # ✅ entry-offline renderer_build 생성
       - name: Build entry-offline renderer bundles
         env:
           NODE_OPTIONS: --openssl-legacy-provider
         run: |
           set -Eeuo pipefail
           corepack enable || true
-
-          echo "== entry-offline package scripts =="
-          (cat entry-offline/package.json | head -n 160) || true
-
-          echo "== yarn install (entry-offline) =="
           yarn --cwd entry-offline install --frozen-lockfile || yarn --cwd entry-offline install
+          yarn --cwd entry-offline webpack
 
-          echo "== try build commands (entry-offline) =="
-          set +e
-          for cmd in \
-            "yarn --cwd entry-offline webpack"
-          do
-            echo "TRY: $cmd"
-            $cmd
-            code=$?
-            if [ $code -eq 0 ]; then
-              echo "OK: build succeeded with: $cmd"
-              break
-            else
-              echo "FAIL($code): $cmd"
-            fi
-          done
-          set -e
-
-          echo "== find renderer_build output =="
-          find entry-offline -maxdepth 8 -type d -name "renderer_build" -print | head -n 20 || true
-          find entry-offline -maxdepth 10 -type f -name "init.bundle.js" -print | head -n 20 || true
-          find entry-offline -maxdepth 10 -type f -name "render.bundle.js" -print | head -n 20 || true
+          test -f entry-offline/src/renderer_build/init.bundle.js
+          test -f entry-offline/src/renderer_build/render.bundle.js
 
       - name: Fetch assets into www
         run: |
           set -Eeuo pipefail
           bash scripts/fetch_entry_assets.sh
-          du -sh www || true
-          ls -la www | head -n 80 || true
           test -f www/index.html
 
-      # ✅ entry-offline 리소스 + 번들만 복사 (index.html 덮어쓰기/수정 없음)
+      # ✅ index.html은 건드리지 않음
       - name: Copy entry-offline resources into www (keep index.html)
         run: |
           set -Eeuo pipefail
@@ -147,35 +101,48 @@ jobs:
           if [ -d "entry-offline/src/renderer/resources" ]; then
             mkdir -p "www/renderer/resources"
             cp -a "entry-offline/src/renderer/resources/." "www/renderer/resources/"
-            echo "COPIED: renderer/resources"
           fi
 
-          RB="$(find entry-offline -maxdepth 10 -type d -name "renderer_build" | head -n 1 || true)"
-          if [ -n "$RB" ] && [ -d "$RB" ]; then
-            mkdir -p "www/renderer_build"
-            cp -a "$RB/." "www/renderer_build/"
-            echo "COPIED: $RB -> www/renderer_build"
-          else
-            echo "ERROR: renderer_build not found"
-            exit 1
-          fi
+          RB="entry-offline/src/renderer_build"
+          mkdir -p "www/renderer_build"
+          cp -a "$RB/." "www/renderer_build/"
 
-          echo "== verify bundles =="
           test -f "www/renderer_build/init.bundle.js"
           test -f "www/renderer_build/render.bundle.js"
 
-      # ✅ www/images 실제 존재/하위폴더 확인 (원인 추적용)
-      - name: Debug list images folders in www
+      # ✅✅ 핵심: EntryJS 이미지 트리를 www/images로 "하위폴더까지" 통째로 미러링
+      - name: Mirror entryjs images tree into www/images (include subfolders)
         run: |
           set -Eeuo pipefail
-          echo "== www/images exists? =="
-          ls -la www | grep -E "images|lib" || true
-          echo "== images root =="
-          ls -la www/images | head -n 200 || true
-          echo "== images nested samples =="
-          find www/images -maxdepth 2 -type d | head -n 100 || true
-          echo "== hw folder sample =="
-          find www/images/hw -maxdepth 1 -type f 2>/dev/null | head -n 50 || true
+
+          # rsync 설치 (우분투 기본에 있는 경우도 있지만 안전하게)
+          sudo apt-get update -y
+          sudo apt-get install -y rsync
+
+          mkdir -p www/images
+
+          if [ -d "www/lib/entryjs/images" ]; then
+            echo "MIRROR: www/lib/entryjs/images -> www/images"
+            rsync -a --ignore-existing "www/lib/entryjs/images/." "www/images/."
+          fi
+
+          # 어떤 스크립트는 entry-js 경로도 같이 쓰는 경우가 있어 같이 보강
+          if [ -d "www/lib/entry-js/images" ]; then
+            echo "MIRROR: www/lib/entry-js/images -> www/images"
+            rsync -a --ignore-existing "www/lib/entry-js/images/." "www/images/."
+          fi
+
+          echo "== verify nested folders exist =="
+          test -d "www/images/hw" || (echo "ERROR: www/images/hw missing" && exit 1)
+          test -d "www/images/temp" || (echo "ERROR: www/images/temp missing" && exit 1)
+
+          echo "== sample nested files =="
+          find "www/images/hw" -maxdepth 1 -type f | head -n 20 || true
+          find "www/images/temp" -maxdepth 1 -type f | head -n 20 || true
+
+          echo "== counts =="
+          echo -n "www/images total png: "; find www/images -type f -name "*.png" | wc -l || true
+          echo -n "www/images nested(hw) png: "; find www/images/hw -type f -name "*.png" | wc -l || true
 
       - name: Ensure Android platform
         run: |
@@ -190,7 +157,6 @@ jobs:
           npx cap sync android
           npx cap copy android
           du -sh android/app/src/main/assets/public || true
-          ls -la android/app/src/main/assets/public | head -n 80 || true
 
       - name: Allow cleartext localhost (for http scheme)
         run: |
@@ -214,7 +180,7 @@ jobs:
           cd android
           ./gradlew assembleDebug
 
-      - name: Inspect APK contents (must include renderer_build + images)
+      - name: Inspect APK contents (must include nested images)
         run: |
           set -Eeuo pipefail
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
@@ -223,15 +189,15 @@ jobs:
           echo "== renderer_build inside apk =="
           unzip -l "$APK" | grep -E "assets/public/renderer_build/(init|render)\.bundle\.js" || true
 
-          echo "== image count inside apk =="
+          echo "== images root count inside apk =="
           unzip -l "$APK" | grep -E "assets/public/images/" | wc -l || true
 
-          echo "== sample nested image in apk (ADDED) =="
-          unzip -l "$APK" | grep -F "assets/public/images/hw/" | head -n 20 || true
-          unzip -l "$APK" | grep -F "assets/public/images/temp/" | head -n 20 || true
+          echo "== nested hw/temp folders inside apk (IMPORTANT) =="
+          unzip -l "$APK" | grep -E "assets/public/images/hw/" | head -n 30 || true
+          unzip -l "$APK" | grep -E "assets/public/images/temp/" | head -n 30 || true
 
-          echo "== index.html head (first 40 lines) =="
-          unzip -p "$APK" assets/public/index.html | head -n 40
+          echo "== spot check (transparent) =="
+          unzip -l "$APK" | grep -E "assets/public/images/hw/transparent\.png" || true
 
       - name: Cleanup old artifacts (keep latest 1)
         uses: actions/github-script@v7
