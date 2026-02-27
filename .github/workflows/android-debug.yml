@@ -122,8 +122,7 @@ jobs:
           bash scripts/fetch_entry_assets.sh
           du -sh www || true
           ls -la www | head -n 80 || true
-          test -f www/index.html
-      - name: Replace broken PNGs with 1x1 transparent fallback
+          - name: Replace broken PNGs with 1x1 transparent fallback (safe)
         run: |
           set -Eeuo pipefail
           sudo apt-get update -y
@@ -133,11 +132,12 @@ jobs:
           mkdir -p www/images
           convert -size 1x1 xc:none PNG32:www/images/__transparent_1x1.png
 
-          # 깨진 png 찾기: 파일 크기가 너무 작은 것(예: 200바이트 미만)을 broken으로 간주
-          find www -type f -name "*.png" -size -200c -print0 | while IFS= read -r -d '' f; do
-            echo "REPLACE broken tiny png: $f"
-            cp -f www/images/__transparent_1x1.png "$f"
-          done
+          # 깨진 png(너무 작은 파일) -> 투명 1x1로 교체
+          find www -type f -name "*.png" -size -200c ! -path "*/__transparent_1x1.png" -print0 \
+            | while IFS= read -r -d '' f; do
+                echo "REPLACE broken tiny png: $f"
+                cp -f "www/images/__transparent_1x1.png" "$f"
+              done
 
       # ✅✅ 핵심: ./images (루트) 가 생겼으면 www/images 로 넣어 “www안에 images 없음” 해결
       - name: Ensure images folder is under www/images
