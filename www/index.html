@@ -219,6 +219,51 @@
         if (await probeBase(c)) { BASE = c; break; }
       }
       bootLine("BASE = " + BASE, "ok");
+      // ✅ FINAL PATH FIX (Image + XHR + fetch 모두 커버)
+// 절대경로 /images/... → ./images/...
+
+function __fixImagePath(u){
+  if (typeof u !== "string") return u;
+  if (u.startsWith("/images/")) {
+    return "./images/" + u.slice(8);
+  }
+  return u;
+}
+
+// 1️⃣ Image
+{
+  const d = Object.getOwnPropertyDescriptor(Image.prototype, "src");
+  if (d && d.set) {
+    Object.defineProperty(Image.prototype, "src", {
+      get: d.get,
+      set(v){ return d.set.call(this, __fixImagePath(v)); }
+    });
+  }
+}
+
+// 2️⃣ XMLHttpRequest (createjs 핵심)
+{
+  const _open = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url, ...rest){
+    return _open.call(this, method, __fixImagePath(url), ...rest);
+  };
+}
+
+// 3️⃣ fetch
+if (window.fetch){
+  const _fetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    if (typeof input === "string")
+      return _fetch(__fixImagePath(input), init);
+
+    if (input && typeof input.url === "string")
+      return _fetch(new Request(__fixImagePath(input.url), input), init);
+
+    return _fetch(input, init);
+  };
+}
+
+bootLine("PATCH: /images → ./images (Image+XHR+fetch)", "ok");
 installImagesAbsolutePathPatch(BASE);
       // ✅ MIN PATCH: 절대경로 /images/... → 상대 ./images/...
 Object.defineProperty(Image.prototype, "src", {
