@@ -220,6 +220,10 @@
       }
       bootLine("BASE = " + BASE, "ok");
 installImagesAbsolutePathPatch(BASE);
+      // ✅ MIN PATCH: 절대경로 /images/... → 상대 ./images/...
+Object.defineProperty(Image.prototype, "src", {
+  set(v){ this.setAttribute("src", v && v.startsWith("/images/") ? "./images/" + v.slice(8) : v); }
+});
       // CSS
       const cssList = [
         BASE + "lib/entry-tool/dist/entry-tool.css",
