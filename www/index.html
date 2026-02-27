@@ -57,7 +57,47 @@
       }
     }
   </script>
+<script>
+  // ✅ /images/... 로 요청되는 절대경로를 BASE 기준 상대경로로 바꿈
+  function installImagesAbsolutePathPatch(BASE) {
+    if (window.__ABS_IMAGES_PATCHED__) return;
+    window.__ABS_IMAGES_PATCHED__ = true;
 
+    const fix = (u) => {
+      if (typeof u !== "string") return u;
+      // /images/xxx -> {BASE}images/xxx
+      if (u.startsWith("/images/")) return BASE + "images/" + u.slice("/images/".length);
+      return u;
+    };
+
+    // 1) Image.src (Canvas 이미지 로딩 포함)
+    const d = Object.getOwnPropertyDescriptor(Image.prototype, "src");
+    if (d && d.set) {
+      Object.defineProperty(Image.prototype, "src", {
+        get: d.get,
+        set(v) { return d.set.call(this, fix(v)); }
+      });
+    }
+
+    // 2) XHR (createjs/preloadjs가 여길 많이 탐)
+    const _open = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+      return _open.call(this, method, fix(url), ...rest);
+    };
+
+    // 3) fetch (혹시 쓰는 경우)
+    if (window.fetch) {
+      const _fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        if (typeof input === "string") return _fetch(fix(input), init);
+        if (input && typeof input.url === "string") return _fetch(fix(input.url), init);
+        return _fetch(input, init);
+      };
+    }
+
+    if (window.bootLine) bootLine("PATCH: /images/* -> " + BASE + "images/*", "dim");
+  }
+</script>
   <script>
     // 기존 호출 호환용 alias
     const bootLine = (...args) => window.bootLine(...args);
@@ -179,7 +219,7 @@
         if (await probeBase(c)) { BASE = c; break; }
       }
       bootLine("BASE = " + BASE, "ok");
-
+installImagesAbsolutePathPatch(BASE);
       // CSS
       const cssList = [
         BASE + "lib/entry-tool/dist/entry-tool.css",
