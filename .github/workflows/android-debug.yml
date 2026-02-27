@@ -123,8 +123,6 @@ jobs:
           du -sh www || true
           ls -la www | head -n 80 || true
           - name: Replace broken PNGs with 1x1 transparent fallback (safe)
-        run: |
-          set -Eeuo pipefail
           sudo apt-get update -y
           sudo apt-get install -y imagemagick
 
