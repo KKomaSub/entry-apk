@@ -233,7 +233,7 @@ jobs:
           PY
 
       # (선택) 구조 확인용
-      - name: Debug: locate image dirs under www/lib
+      - name: Debug locate image dirs under www/lib
         run: |
           set -Eeuo pipefail
           echo "== top lib dirs =="
