@@ -89,7 +89,7 @@ jobs:
           ls -la entry-offline/src/renderer/components | head -n 200 || true
           test ! -f entry-offline/src/renderer/components/Index.tsx || (echo "Index.tsx still exists" && exit 1)
 
-      # ✅ entry-offline renderer_build 실제 생성
+      # ✅ entry-offline renderer_build 실제 생성 (흰화면 방지의 핵심)
       - name: Build entry-offline renderer bundles
         run: |
           set -Eeuo pipefail
@@ -133,8 +133,53 @@ jobs:
           set -Eeuo pipefail
           bash scripts/fetch_entry_assets.sh
           du -sh www || true
-          ls -la www | head -n 80 || true
+          ls -la www | head -n 120 || true
           test -f www/index.html
+
+      # ✅ www/images가 비어있거나 없으면: public/assets 등 다른 위치에서 찾아서 www/images로 강제 수집
+      - name: Ensure www/images exists (discover & copy)
+        run: |
+          set -Eeuo pipefail
+
+          mkdir -p www
+
+          echo "== locate candidate images directories =="
+          # repo 전체에서 "images/block_icon" 또는 "images/media"가 있는 루트를 찾음
+          CANDIDATES="$(find . -type d \( -path '*/images/block_icon' -o -path '*/images/media' \) -print | head -n 50 || true)"
+          echo "$CANDIDATES" || true
+
+          if [ -d "www/images" ] && [ "$(find www/images -type f 2>/dev/null | wc -l)" -gt 0 ]; then
+            echo "OK: www/images already has files"
+          else
+            echo "WARN: www/images missing or empty -> try to copy from discovered roots"
+            # images/* 가 들어있는 상위 폴더를 찾아 www/images로 복사
+            # 예: ./public/images/block_icon -> ./public/images (parent of images)
+            src_images_dir=""
+            while IFS= read -r d; do
+              parent="$(dirname "$d")"         # .../images
+              parent2="$(dirname "$parent")"   # ... (root containing images)
+              if [ -d "$parent" ] && [ "$(find "$parent" -type f 2>/dev/null | wc -l)" -gt 0 ]; then
+                src_images_dir="$parent"
+                break
+              fi
+            done <<< "$CANDIDATES"
+
+            if [ -n "$src_images_dir" ]; then
+              echo "COPY images from: $src_images_dir -> www/images"
+              rm -rf www/images || true
+              mkdir -p www/images
+              cp -a "$src_images_dir/." "www/images/"
+            else
+              echo "ERROR: could not find any non-empty images folder to populate www/images"
+              echo "HINT: your fetch script may not be copying images into www at all."
+              exit 1
+            fi
+          fi
+
+          echo "== www/images quick stats =="
+          find www/images -maxdepth 2 -type d -print | head -n 50 || true
+          echo "files:"; find www/images -type f | wc -l || true
+          echo "sample:"; ls -la www/images | head -n 80 || true
 
       # ✅ entry-offline 리소스 + 번들만 복사 (index.html 덮어쓰기 금지)
       - name: Copy entry-offline resources into www (keep index.html)
@@ -159,156 +204,177 @@ jobs:
             echo "ERROR: renderer_build not found"
             exit 1
           fi
+
           echo "== verify bundles =="
           test -f "www/renderer_build/init.bundle.js"
           test -f "www/renderer_build/render.bundle.js"
 
-      # ✅✅✅ 핵심: www/images 가 없으면 만들어서 lib 내부 images를 미러링
-      - name: Ensure www/images exists (mirror from lib if needed)
+      # ✅ 디버그: entry 이미지 경로 확인(실제 존재하는 폴더 기준)
+      - name: Debug list lib image folders in www
+        run: |
+          set -Eeuo pipefail
+          echo "== www/lib top =="
+          ls -la www/lib | head -n 200 || true
+
+          echo "== probe common image dirs =="
+          for p in \
+            "www/lib/@entrylabs/entry/images" \
+            "www/lib/entry-js/images" \
+            "www/lib/entryjs/images" \
+            "www/lib/entry/images" \
+            "www/lib/@entrylabs/entry" \
+            "www/lib/entry-js" \
+            "www/lib/entryjs" \
+          ; do
+            if [ -d "$p" ]; then
+              echo "OK DIR: $p"
+              find "$p" -maxdepth 2 -type d -print | head -n 20 || true
+              find "$p" -maxdepth 3 -type f \( -name "*.svg" -o -name "*.png" \) | head -n 20 || true
+            else
+              echo "MISS: $p"
+            fi
+          done
+
+      # ✅✅ 하위폴더 이미지 경로/대소문자/레거시 요청 자동 보정 (www/images 내부만)
+      - name: Fix missing images paths (case/legacy) in www
         run: |
           set -Eeuo pipefail
           python3 - <<'PY'
-          import os, shutil
+          import os, re, shutil
 
-          ROOT="www"
-          img=os.path.join(ROOT,"images")
-          if os.path.isdir(img) and os.listdir(img):
-            print("[ensure-images] www/images already exists and not empty")
+          ROOT = "www"
+
+          img_root = os.path.join(ROOT, "images")
+          img_index = {}
+          if os.path.isdir(img_root):
+            for dirpath, _, filenames in os.walk(img_root):
+              for fn in filenames:
+                rel = os.path.relpath(os.path.join(dirpath, fn), ROOT).replace("\\", "/")
+                img_index[rel.lower()] = rel
           else:
-            # 후보: 실제로 많이 나오는 경로들
-            candidates = [
-              os.path.join(ROOT,"lib","entryjs","images"),
-              os.path.join(ROOT,"lib","entry-js","images"),
-              os.path.join(ROOT,"lib","entry","images"),
-              os.path.join(ROOT,"lib","@entrylabs","entry","images"),
-            ]
+            print("[fix-images] no www/images folder; skip")
+            raise SystemExit(0)
 
-            src=None
-            for c in candidates:
-              if os.path.isdir(c) and any(os.scandir(c)):
-                src=c
-                break
+          pat = re.compile(r'(?:(?:/|\.{0,2}/)images/)[A-Za-z0-9_\-./]+')
+          refs = set()
 
-            if not src:
-              # 마지막 수단: www/lib 아래에서 images 폴더 하나라도 찾기
-              for dirpath, dirnames, _ in os.walk(os.path.join(ROOT,"lib")):
-                if os.path.basename(dirpath) == "images":
-                  if any(os.scandir(dirpath)):
-                    src=dirpath
-                    break
+          for dirpath, _, filenames in os.walk(ROOT):
+            # node_modules/renderer_build는 여기서도 제외(속도)
+            if "node_modules" in dirpath or "renderer_build" in dirpath:
+              continue
+            for fn in filenames:
+              if not (fn.endswith(".js") or fn.endswith(".css") or fn.endswith(".html")):
+                continue
+              if fn.endswith(".map"):
+                continue
+              p = os.path.join(dirpath, fn)
+              try:
+                data = open(p, "rb").read()
+              except:
+                continue
+              s = data.decode("utf-8", "ignore")
+              for m in pat.findall(s):
+                u = m.replace("\\", "/")
+                u = re.sub(r'^(?:/|\./|\.\./)+', '', u)
+                if u.startswith("images/"):
+                  refs.add(u)
 
-            os.makedirs(img, exist_ok=True)
+          made = 0
+          missing = 0
+          for ref in sorted(refs):
+            dst = os.path.join(ROOT, ref)
+            if os.path.exists(dst):
+              continue
+            src_rel = img_index.get(ref.lower())
+            if not src_rel:
+              missing += 1
+              continue
+            src = os.path.join(ROOT, src_rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst)
+            made += 1
 
-            if src:
-              print("[ensure-images] MIRROR:", src, "->", img)
-              # copy contents (not overwrite existing files)
-              for dp, _, fns in os.walk(src):
-                rel=os.path.relpath(dp, src)
-                dst=os.path.join(img, rel) if rel != "." else img
-                os.makedirs(dst, exist_ok=True)
-                for fn in fns:
-                  s=os.path.join(dp, fn)
-                  d=os.path.join(dst, fn)
-                  if not os.path.exists(d):
-                    shutil.copy2(s, d)
-            else:
-              print("[ensure-images] WARNING: no source images dir found under www/lib")
+          print(f"[fix-images] refs={len(refs)} made={made} still-missing={missing}")
 
-          # 1x1 픽셀(테스트용) 없으면 생성
-          one=os.path.join(img,"_1x1.png")
-          if not os.path.exists(one):
-            # 가장 단순한 1x1 PNG 바이너리
-            data = bytes.fromhex(
-              "89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C489"
-              "0000000A49444154789C6360000002000154A24F5D0000000049454E44AE426082"
-            )
-            with open(one,"wb") as f:
-              f.write(data)
-            print("[ensure-images] wrote images/_1x1.png")
+          icon_dir = os.path.join(ROOT, "images", "icon")
+          os.makedirs(icon_dir, exist_ok=True)
 
-          print("[ensure-images] images exists:", os.path.isdir(img))
-          print("[ensure-images] images file sample:")
-          for i, name in enumerate(sorted(os.listdir(img))[:30]):
-            print(" -", name)
+          src_blk = os.path.join(ROOT, "images", "block_icon")
+          dst_blk = os.path.join(ROOT, "images", "icon", "block_icon")
+          if os.path.isdir(src_blk) and not os.path.isdir(dst_blk):
+            shutil.copytree(src_blk, dst_blk)
+            print("[fix-images] copied block_icon -> images/icon/block_icon")
           PY
 
-      # (선택) 구조 확인용
-      - name: Debug locate image dirs under www/lib
-        run: |
-          set -Eeuo pipefail
-          echo "== top lib dirs =="
-          ls -la www/lib | head -n 200 || true
-          echo "== image dirs (depth 6) =="
-          find www/lib -maxdepth 6 -type d -name images -print || true
-          echo "== root images exists? =="
-          ls -la www/images | head -n 80 || true
-
-      # ✅✅ SVG -> PNG (www 전체)
-      - name: Convert ALL SVG to PNG in www (robust)
+      # ✅ SVG -> PNG (www/images + www/lib 하위의 svg만; 존재하는 폴더만)
+      - name: Convert SVG to PNG (images + lib)
         run: |
           set -Eeuo pipefail
           sudo apt-get update -y
           sudo apt-get install -y librsvg2-bin
 
-          find www -type f -name "*.svg" -print0 | while IFS= read -r -d '' f; do
-            out="${f%.svg}.png"
-            if [ ! -f "$out" ]; then
-              rsvg-convert "$f" -o "$out" || true
-            fi
-          done
+          # 1) www/images
+          if [ -d "www/images" ]; then
+            find "www/images" -type f -name "*.svg" -print0 | while IFS= read -r -d '' f; do
+              out="${f%.svg}.png"
+              if [ ! -f "$out" ]; then
+                rsvg-convert "$f" -o "$out" || true
+              fi
+            done
+          fi
+
+          # 2) www/lib (entry assets가 여기 있을 수 있음)
+          if [ -d "www/lib" ]; then
+            find "www/lib" -type f -name "*.svg" -print0 | while IFS= read -r -d '' f; do
+              out="${f%.svg}.png"
+              if [ ! -f "$out" ]; then
+                rsvg-convert "$f" -o "$out" || true
+              fi
+            done
+          fi
 
           echo "SVG count:"; find www -type f -name "*.svg" | wc -l || true
           echo "PNG count:"; find www -type f -name "*.png" | wc -l || true
 
-      # ✅✅ 모든 .svg 참조를 .png로 치환 (경로 상관없이)
-      - name: Rewrite ALL .svg refs to .png in www (js/css/html)
+      # ✅✅✅ “모든 참조를 png로” (병렬, 빠름 / node_modules, renderer_build, *.map 제외)
+      - name: Rewrite ALL .svg refs to .png in www (fast, parallel)
         run: |
           set -Eeuo pipefail
-          python3 - <<'PY'
-          import os, re
-          ROOT="www"
-          exts=(".js",".css",".html")
-          pat = re.compile(r'([A-Za-z0-9_\-./]+)\.svg(\b|[?#"\'\)\s])', re.IGNORECASE)
 
-          changed=0
-          files=0
-          for dp,_,fns in os.walk(ROOT):
-            for fn in fns:
-              if not fn.endswith(exts):
-                continue
-              p=os.path.join(dp,fn)
-              s=open(p,"rb").read().decode("utf-8","ignore")
-              ns, n = pat.subn(r'\1.png\2', s)
-              if n:
-                open(p,"wb").write(ns.encode("utf-8"))
-                changed += n
-                files += 1
+          # JS/CSS/HTML만, 대형 폴더 제외
+          find www \
+            -type f \( -name "*.js" -o -name "*.css" -o -name "*.html" \) \
+            ! -path "*/node_modules/*" \
+            ! -path "*/renderer_build/*" \
+            ! -name "*.map" \
+            -print0 | \
+          xargs -0 -n 50 -P 4 sed -i -E 's/\.svg([?#"'\''\)\s]|$)/.png\1/Ig'
 
-          print(f"[rewrite-svg->png] files_changed={files} refs_changed={changed}")
-          PY
+          echo "[rewrite-svg->png] done"
 
-      # ✅✅✅ PNG 재인코딩 (병렬 + 깨진 PNG는 스킵)
-      - name: Re-encode ALL PNGs for Android WebView (parallel, skip broken)
+      # ✅ PNG 재인코딩 (깨진 png는 SKIP, 병렬)
+      - name: Re-encode ALL PNGs for Android WebView (skip broken, parallel)
         run: |
           set -Eeuo pipefail
           sudo apt-get update -y
           sudo apt-get install -y imagemagick
 
-          # 병렬 처리(4개)
-          find www -type f -name "*.png" -print0 \
-            | xargs -0 -n 1 -P 4 bash -lc '
-                f="$0"
-                if [ ! -s "$f" ]; then
-                  echo "SKIP (empty): $f"
-                  exit 0
-                fi
-                convert "$f" -strip -define png:color-type=6 -define png:bit-depth=8 PNG32:"$f".tmp 2>/dev/null || {
-                  echo "SKIP (broken): $f"
-                  rm -f "$f".tmp || true
-                  exit 0
-                }
-                mv "$f".tmp "$f"
-              '
+          export MAGICK_THREAD_LIMIT=1
+
+          find www -type f -name "*.png" -print0 | \
+          xargs -0 -n 1 -P 4 bash -lc '
+            f="$0"
+            if [ ! -s "$f" ]; then
+              echo "SKIP (empty): $f"
+              exit 0
+            fi
+            convert "$f" -strip -define png:color-type=6 -define png:bit-depth=8 PNG32:"$f".tmp 2>/dev/null || {
+              echo "SKIP (broken): $f"
+              rm -f "$f".tmp || true
+              exit 0
+            }
+            mv "$f".tmp "$f"
+          '
 
       - name: Ensure Android platform
         run: |
@@ -323,9 +389,7 @@ jobs:
           npx cap sync android
           npx cap copy android
           du -sh android/app/src/main/assets/public || true
-          ls -la android/app/src/main/assets/public | head -n 80 || true
-          echo "== ensure images folder in android assets =="
-          ls -la android/app/src/main/assets/public/images | head -n 80 || true
+          ls -la android/app/src/main/assets/public | head -n 120 || true
 
       - name: Allow cleartext localhost (for http scheme)
         run: |
@@ -358,14 +422,16 @@ jobs:
           echo "== renderer_build inside apk =="
           unzip -l "$APK" | grep -E "assets/public/renderer_build/(init|render)\.bundle\.js" || true
 
+          echo "== images folder inside apk =="
+          unzip -l "$APK" | grep -E "assets/public/images/" | head -n 40 || true
           echo "== image count inside apk =="
           unzip -l "$APK" | grep -E "assets/public/images/" | wc -l || true
 
-          echo "== check _1x1.png inside apk =="
-          unzip -l "$APK" | grep -F "assets/public/images/_1x1.png" || true
+          echo "== sample ai_hand_icon files inside apk =="
+          unzip -l "$APK" | grep -E "assets/public/images/.*ai_hand_icon\.(svg|png)" || true
 
-          echo "== sample block icon =="
-          unzip -l "$APK" | grep -E "assets/public/images/block_icon/ai_hand_icon\.(png|svg)" || true
+          echo "== scan for remaining .svg refs in index.html (should be none) =="
+          unzip -p "$APK" assets/public/index.html | grep -i "\.svg" || true
 
       - name: Cleanup old artifacts (keep latest 1)
         uses: actions/github-script@v7
