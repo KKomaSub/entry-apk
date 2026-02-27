@@ -189,7 +189,7 @@ jobs:
           test -f "www/renderer_build/render.bundle.js"
 
       # ✅ 존재하는 entry 이미지 경로 확인(레포마다 다름)
-      - name: Debug: list candidate entry image dirs
+      - name: Debug list candidate entry image dirs
         run: |
           set -Eeuo pipefail
           echo "== candidate dirs =="
