@@ -1,32 +1,87 @@
-/* www/local_backend.js
- *
- * 목적:
- * - Entry(웹)에서 "오브젝트/모양/소리 추가(업로드)" + "데이터테이블" 같은 기능이
- *   원래는 서버(/rest/...)를 호출하는데, APK(WebView)에는 서버가 없으니
- *   fetch/XHR을 가로채서 "가짜 백엔드"처럼 동작하게 함.
- *
- * 저장소:
- * - IndexedDB에 Blob(이미지/사운드)와 JSON(테이블 등)을 저장
- *
- * 경로 규칙:
- * - fileId 생성 후 앞 4글자로 /aa/bb/ 폴더 구조를 구성
- * - uploads/aa/bb/{image|thumb|sound}/fileId.(png|mp3 등)
+/* www/local_backend.js (v2)
+ * - XHR 교체 금지: prototype open/send patch (axios/라이브러리 호환)
+ * - /rest/** 전부 가로채기:
+ *    - FormData => 업로드(이미지/사운드/썸네일)
+ *    - JSON => 저장(테이블 포함)
+ *    - GET => 저장된 blob/json 반환
+ * - uploads 저장경로:
+ *    uploads/aa/bb/{image|thumb|sound}/fileId.ext
+ * - Blob/JSON 저장: IndexedDB
  */
 
 (function () {
   "use strict";
 
-  const DB_NAME = "entry_offline_local_backend_v1";
+  const DB_NAME = "entry_offline_local_backend_v2";
   const DB_VER = 1;
 
-  const STORES = {
-    blobs: "blobs", // key: "uploads/aa/bb/type/file.ext"  value: {blob, ct, ts, size}
-    json: "json",   // key: string                         value: any json
+  const STORE_BLOBS = "blobs"; // key: "uploads/aa/bb/type/file.ext"
+  const STORE_JSON  = "json";  // key: "rest:/rest/...." or "rest-body:/rest/..."
+
+  const log = (msg) => {
+    try { if (window.bootLine) window.bootLine(msg, "dim"); } catch (_) {}
+  };
+
+  const once = (k, fn) => {
+    if (window[k]) return;
+    window[k] = true;
+    fn();
   };
 
   function now() { return Date.now(); }
 
-  function guessContentTypeByExt(path) {
+  function normalizeUrl(u) {
+    if (u == null) return "";
+    u = String(u);
+
+    // entry./ 오타 보정
+    u = u.replace("/lib/@entrylabs/entry./", "/lib/@entrylabs/entry/");
+    u = u.replace("lib/@entrylabs/entry./", "lib/@entrylabs/entry/");
+
+    // 쿼리 제거
+    const q = u.indexOf("?");
+    if (q >= 0) u = u.slice(0, q);
+    return u;
+  }
+
+  function stripLeading(u) {
+    u = String(u || "");
+    while (u.startsWith("./")) u = u.slice(2);
+    while (u.startsWith("/")) u = u.slice(1);
+    return u;
+  }
+
+  function isRest(u) {
+    u = normalizeUrl(u);
+    // absolute URL도 처리
+    try {
+      const uu = new URL(u, location.href);
+      return uu.pathname.startsWith("/rest/");
+    } catch (_) {
+      return u.includes("/rest/");
+    }
+  }
+
+  function restPathKey(u) {
+    try {
+      const uu = new URL(u, location.href);
+      return "rest:" + uu.pathname; // /rest/...
+    } catch (_) {
+      // fallback
+      const i = u.indexOf("/rest/");
+      return "rest:" + (i >= 0 ? u.slice(i) : u);
+    }
+  }
+
+  function isUploadsPath(u) {
+    u = stripLeading(normalizeUrl(u));
+    return u.startsWith("uploads/") ||
+           u.startsWith("src/renderer/resources/uploads/") ||
+           u.startsWith("renderer/resources/uploads/") ||
+           u.startsWith("resources/uploads/");
+  }
+
+  function guessCT(path) {
     const p = String(path || "").toLowerCase();
     if (p.endsWith(".png")) return "image/png";
     if (p.endsWith(".jpg") || p.endsWith(".jpeg")) return "image/jpeg";
@@ -41,58 +96,7 @@
     return "application/octet-stream";
   }
 
-  function normalizeUrl(u) {
-    if (u == null) return "";
-    u = String(u);
-
-    // entry./ 오타 보정 (사용자 로그에 실제로 등장)
-    u = u.replace("/lib/@entrylabs/entry./", "/lib/@entrylabs/entry/");
-    u = u.replace("lib/@entrylabs/entry./", "lib/@entrylabs/entry/");
-
-    // 쿼리 제거
-    const q = u.indexOf("?");
-    if (q >= 0) u = u.slice(0, q);
-
-    // 앞에 ./, / 제거는 "업로드 저장키" 만들 때만 사용
-    return u;
-  }
-
-  function stripLeadingDotsAndSlashes(u) {
-    u = String(u || "");
-    // "./uploads/.." "/uploads/.." "uploads/.." 모두 "uploads/.."로
-    while (u.startsWith("./")) u = u.slice(2);
-    while (u.startsWith("/")) u = u.slice(1);
-    return u;
-  }
-
-  function isUploadGetPath(u) {
-    u = stripLeadingDotsAndSlashes(normalizeUrl(u));
-    return u.startsWith("uploads/") || u.startsWith("src/renderer/resources/uploads/") || u.startsWith("resources/uploads/");
-  }
-
-  function isUploadApi(u) {
-    u = normalizeUrl(u);
-
-    // 최대한 넓게 커버 (Entry 버전별로 endpoint가 조금씩 다름)
-    // - /rest/sound/upload
-    // - /rest/image/upload
-    // - /rest/project/upload*
-    // - /rest/upload*
-    return (
-      /\/rest\/sound\/upload\b/i.test(u) ||
-      /\/rest\/image\/upload\b/i.test(u) ||
-      /\/rest\/project\/upload/i.test(u) ||
-      /\/rest\/upload/i.test(u)
-    );
-  }
-
-  function isDataTableApi(u) {
-    u = normalizeUrl(u);
-    // 데이터테이블 관련 endpoint 폭넓게 (버전차 대비)
-    return /\/rest\/datatable\b/i.test(u) || /\/rest\/dataTable\b/i.test(u);
-  }
-
-  function randomBase36(len) {
+  function random36(len) {
     const bytes = new Uint8Array(len);
     crypto.getRandomValues(bytes);
     let out = "";
@@ -100,12 +104,11 @@
     return out;
   }
 
-  // uid(8)+puid.generate()를 100% 재현할 필요는 없고 "충돌 거의 없는 문자열"이면 됩니다.
   function createFileId() {
-    // 예: e49448cdlyy4s42e0013f820158i7nqj 같은 느낌
-    const a = randomBase36(8);
-    const b = (now().toString(36)).padStart(8, "0");
-    const c = randomBase36(16);
+    // 충돌 거의 없는 32자
+    const a = random36(8);
+    const b = now().toString(36).padStart(8, "0");
+    const c = random36(16);
     return (a + b + c).slice(0, 32);
   }
 
@@ -116,12 +119,10 @@
     return { a, b };
   }
 
-  function ensureExtByMimeOrName(file, fallbackExt) {
+  function extFromFile(file, fallback) {
     const name = (file && file.name) ? String(file.name) : "";
-    const lower = name.toLowerCase();
-    const hasDot = lower.lastIndexOf(".") >= 0;
-    if (hasDot) return lower.slice(lower.lastIndexOf("."));
-    // mime 기반 추정
+    const dot = name.lastIndexOf(".");
+    if (dot >= 0) return name.slice(dot).toLowerCase();
     const t = (file && file.type) ? String(file.type) : "";
     if (t === "image/png") return ".png";
     if (t === "image/jpeg") return ".jpg";
@@ -129,14 +130,15 @@
     if (t === "audio/mpeg") return ".mp3";
     if (t === "audio/wav") return ".wav";
     if (t === "audio/ogg") return ".ogg";
-    return fallbackExt || ".bin";
+    return fallback || ".bin";
   }
 
-  async function makeThumbPngFromImageBlob(blob, maxW = 320, maxH = 320) {
+  async function makeThumbPng(blob, maxW = 320, maxH = 320) {
     try {
       const bmp = await createImageBitmap(blob);
       const w = bmp.width, h = bmp.height;
-      if (!w || !h) throw new Error("bitmap empty");
+      if (!w || !h) throw 0;
+
       const scale = Math.min(maxW / w, maxH / h, 1);
       const tw = Math.max(1, Math.round(w * scale));
       const th = Math.max(1, Math.round(h * scale));
@@ -147,65 +149,51 @@
       ctx.drawImage(bmp, 0, 0, tw, th);
 
       const out = await new Promise((resolve) => c.toBlob(resolve, "image/png"));
-      if (!out) throw new Error("toBlob failed");
-      return out;
-    } catch (e) {
-      // 실패 시 썸네일은 원본으로 대체(Entry가 thumb가 꼭 필요하진 않음)
+      return out || blob;
+    } catch (_) {
       return blob;
     }
   }
 
-  class IDBWrap {
-    constructor() { this._dbp = null; }
-
-    async db() {
-      if (this._dbp) return this._dbp;
-      this._dbp = new Promise((resolve, reject) => {
-        const req = indexedDB.open(DB_NAME, DB_VER);
-        req.onupgradeneeded = () => {
-          const db = req.result;
-          if (!db.objectStoreNames.contains(STORES.blobs)) {
-            db.createObjectStore(STORES.blobs);
-          }
-          if (!db.objectStoreNames.contains(STORES.json)) {
-            db.createObjectStore(STORES.json);
-          }
-        };
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-      });
-      return this._dbp;
-    }
-
-    async put(store, key, value) {
-      const db = await this.db();
-      return await new Promise((resolve, reject) => {
-        const tx = db.transaction(store, "readwrite");
-        tx.objectStore(store).put(value, key);
-        tx.oncomplete = () => resolve(true);
-        tx.onerror = () => reject(tx.error);
-      });
-    }
-
-    async get(store, key) {
-      const db = await this.db();
-      return await new Promise((resolve, reject) => {
-        const tx = db.transaction(store, "readonly");
-        const req = tx.objectStore(store).get(key);
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-      });
-    }
+  // IndexedDB
+  function openDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, DB_VER);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(STORE_BLOBS)) db.createObjectStore(STORE_BLOBS);
+        if (!db.objectStoreNames.contains(STORE_JSON))  db.createObjectStore(STORE_JSON);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
   }
 
-  const idb = new IDBWrap();
+  async function idbPut(store, key, val) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(store, "readwrite");
+      tx.objectStore(store).put(val, key);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+    });
+  }
 
-  async function storeBlob(pathKey, blob, contentType) {
-    const key = stripLeadingDotsAndSlashes(normalizeUrl(pathKey));
-    const ct = contentType || blob.type || guessContentTypeByExt(key);
-    await idb.put(STORES.blobs, key, {
+  async function idbGet(store, key) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(store, "readonly");
+      const rq = tx.objectStore(store).get(key);
+      rq.onsuccess = () => resolve(rq.result);
+      rq.onerror = () => reject(rq.error);
+    });
+  }
+
+  async function storeBlob(pathKey, blob, ct) {
+    const key = stripLeading(normalizeUrl(pathKey));
+    await idbPut(STORE_BLOBS, key, {
       blob,
-      ct,
+      ct: ct || blob.type || guessCT(key),
       ts: now(),
       size: blob.size || 0,
     });
@@ -213,25 +201,15 @@
   }
 
   async function loadBlob(pathKey) {
-    const key = stripLeadingDotsAndSlashes(normalizeUrl(pathKey));
-    const v = await idb.get(STORES.blobs, key);
-    return v || null;
+    const key = stripLeading(normalizeUrl(pathKey));
+    return (await idbGet(STORE_BLOBS, key)) || null;
   }
 
-  async function storeJSON(key, obj) {
-    await idb.put(STORES.json, key, obj);
-  }
-
-  async function loadJSON(key) {
-    const v = await idb.get(STORES.json, key);
-    return (v === undefined) ? null : v;
-  }
-
-  function buildUploadPath(fileId, kind, ext) {
+  function uploadPath(fileId, kind, ext) {
     const { a, b } = splitPrefix(fileId);
-    const safeKind = (kind === "sound" || kind === "thumb" || kind === "image") ? kind : "image";
-    const safeExt = (ext && ext.startsWith(".")) ? ext : ".bin";
-    return `uploads/${a}/${b}/${safeKind}/${fileId}${safeExt}`;
+    const k = (kind === "sound" || kind === "thumb" || kind === "image") ? kind : "image";
+    const e = (ext && ext.startsWith(".")) ? ext : ".bin";
+    return `uploads/${a}/${b}/${k}/${fileId}${e}`;
   }
 
   function jsonResponse(obj, status = 200) {
@@ -241,310 +219,253 @@
     });
   }
 
-  async function handleUploadFromFormData(url, formData) {
-    // formData 안에서 "파일"을 최대한 찾아냄
-    let file = null;
-    let fieldName = null;
-
-    for (const [k, v] of formData.entries()) {
-      if (v instanceof File || v instanceof Blob) {
-        file = v;
-        fieldName = k;
-        break;
-      }
-    }
-
-    if (!file) {
-      return jsonResponse({ ok: false, message: "no file in form-data" }, 400);
-    }
-
-    // 어떤 업로드인지 대충 판별 (sound/image)
-    const isSound = /sound/i.test(url) || (file.type && file.type.startsWith("audio/"));
-    const kind = isSound ? "sound" : "image";
-
-    const fileId = createFileId();
-    const ext = ensureExtByMimeOrName(file, isSound ? ".mp3" : ".png");
-
-    const mainPath = buildUploadPath(fileId, kind, ext);
-    await storeBlob(mainPath, file, file.type || guessContentTypeByExt(mainPath));
-
-    // 이미지면 thumb도 같이 만들어서 저장 (Entry UI에서 썸네일을 자주 씀)
-    let thumbPath = null;
-    if (!isSound) {
-      const thumbBlob = await makeThumbPngFromImageBlob(file);
-      thumbPath = buildUploadPath(fileId, "thumb", ".png");
-      await storeBlob(thumbPath, thumbBlob, "image/png");
-    }
-
-    // Entry가 기대할 법한 응답 형태를 넓게 제공(버전차 대비)
-    // - fileId / filename / path / url / image / sound 등 다양하게
-    const out = {
-      ok: true,
-      fileId,
-      id: fileId,
-      field: fieldName,
-      path: "/" + mainPath,
-      url: "./" + mainPath,
-      // 일부 구현은 "image" / "sound" 같은 키로 내려줌
-      image: !isSound ? { fileId, path: "/" + mainPath, url: "./" + mainPath, thumb: thumbPath ? ("./" + thumbPath) : null } : undefined,
-      sound: isSound ? { fileId, path: "/" + mainPath, url: "./" + mainPath } : undefined,
-      thumb: thumbPath ? ("./" + thumbPath) : null,
-      contentType: file.type || guessContentTypeByExt(mainPath),
-      size: file.size || 0,
-    };
-
-    return jsonResponse(out, 200);
-  }
-
-  async function handleUploadsGET(url) {
-    // url: "./uploads/aa/bb/..." or "/uploads/..."
-    const key = stripLeadingDotsAndSlashes(normalizeUrl(url));
-
+  async function handleUploadsGET(u) {
+    const key = stripLeading(normalizeUrl(u));
     const found = await loadBlob(key);
-    if (!found) {
-      return new Response("Not Found", { status: 404 });
-    }
+    if (!found) return new Response("Not Found", { status: 404 });
     return new Response(found.blob, {
       status: 200,
       headers: {
-        "content-type": found.ct || guessContentTypeByExt(key),
+        "content-type": found.ct || guessCT(key),
         "cache-control": "no-store",
       }
     });
   }
 
-  async function handleDataTable(reqUrl, reqInit) {
-    // 아주 단순한 KV 저장 형태로만 제공:
-    // - GET  /rest/datatable/<key>
-    // - POST /rest/datatable/<key>  (body json)
-    // - PUT  /rest/datatable/<key>
-    // - DELETE /rest/datatable/<key>
-    //
-    // 실제 Entry가 어떤 URL을 쓰더라도 최소한 "저장/불러오기"가 되도록 설계
+  async function handleUploadFormData(reqUrl, fd) {
+    // 파일 1개 찾기
+    let file = null;
+    let field = null;
+    for (const [k, v] of fd.entries()) {
+      if (v instanceof File || v instanceof Blob) { file = v; field = k; break; }
+    }
+    if (!file) return jsonResponse({ ok: false, message: "no file" }, 400);
 
-    const u = new URL(reqUrl, location.href);
-    const path = u.pathname; // /rest/datatable/....
-    const key = "datatable:" + path; // path 자체를 키로 씀(버전차 무시)
+    const url = normalizeUrl(reqUrl);
+    const isSound = /sound/i.test(url) || (file.type && file.type.startsWith("audio/"));
+    const kind = isSound ? "sound" : "image";
 
+    const fileId = createFileId();
+    const ext = extFromFile(file, isSound ? ".mp3" : ".png");
+
+    const main = uploadPath(fileId, kind, ext);
+    await storeBlob(main, file, file.type || guessCT(main));
+
+    let thumb = null;
+    if (!isSound) {
+      const tb = await makeThumbPng(file);
+      thumb = uploadPath(fileId, "thumb", ".png");
+      await storeBlob(thumb, tb, "image/png");
+    }
+
+    // ✅ “버전별로 다른 응답”을 최대한 다 커버
+    // Entry가 path/url/filename/fileId/id/image/sound/thumb 중 무엇을 보든 걸리게
+    const out = {
+      ok: true,
+      success: true,
+
+      fileId,
+      id: fileId,
+
+      path: "/" + main,
+      url: "./" + main,
+      filename: fileId + ext,
+      originalname: (file && file.name) ? file.name : (fileId + ext),
+
+      // 흔히 쓰는 구조도 같이 제공
+      image: !isSound ? {
+        fileId,
+        path: "/" + main,
+        url: "./" + main,
+        thumb: thumb ? ("./" + thumb) : null,
+        thumbPath: thumb ? ("/" + thumb) : null,
+      } : undefined,
+
+      sound: isSound ? {
+        fileId,
+        path: "/" + main,
+        url: "./" + main,
+      } : undefined,
+
+      thumb: thumb ? ("./" + thumb) : null,
+      thumbPath: thumb ? ("/" + thumb) : null,
+
+      contentType: file.type || guessCT(main),
+      size: file.size || 0,
+      field,
+    };
+
+    return jsonResponse(out, 200);
+  }
+
+  async function handleRestJSON(reqUrl, reqInit) {
+    // 저장 Key는 URL(path) 기준
+    const key = restPathKey(reqUrl);
     const method = (reqInit && reqInit.method) ? String(reqInit.method).toUpperCase() : "GET";
 
     if (method === "GET") {
-      const v = await loadJSON(key);
+      const v = await idbGet(STORE_JSON, key);
       return jsonResponse(v ?? { ok: true, data: null }, 200);
     }
 
     if (method === "DELETE") {
-      await storeJSON(key, null);
+      await idbPut(STORE_JSON, key, null);
       return jsonResponse({ ok: true }, 200);
     }
 
-    // POST/PUT: body json 저장
+    // POST/PUT/PATCH
     let bodyObj = null;
     try {
-      if (reqInit && reqInit.body) {
-        if (typeof reqInit.body === "string") bodyObj = JSON.parse(reqInit.body);
-        else if (reqInit.body instanceof Blob) bodyObj = JSON.parse(await reqInit.body.text());
-        else bodyObj = null;
-      }
+      const b = reqInit && reqInit.body;
+      if (typeof b === "string") bodyObj = JSON.parse(b);
+      else if (b instanceof Blob) bodyObj = JSON.parse(await b.text());
+      else bodyObj = null;
     } catch (_) {
       bodyObj = null;
     }
-    await storeJSON(key, bodyObj);
-    return jsonResponse({ ok: true }, 200);
+
+    await idbPut(STORE_JSON, key, bodyObj);
+
+    // Entry가 "저장 결과 객체"를 기대하면 그대로 돌려줌
+    return jsonResponse({ ok: true, data: bodyObj }, 200);
   }
 
-  function installFetchInterceptor(basePrefix = "./") {
-    if (window.__LOCAL_BACKEND_FETCH_INSTALLED__) return;
-    window.__LOCAL_BACKEND_FETCH_INSTALLED__ = true;
+  // ===== install =====
+
+  function installFetch() {
+    if (window.__LB_FETCH_V2__) return;
+    window.__LB_FETCH_V2__ = true;
 
     const _fetch = window.fetch.bind(window);
 
     window.fetch = async (input, init) => {
+      const url = (typeof input === "string") ? input : (input && input.url ? input.url : "");
+      const u = normalizeUrl(url);
+
+      // (딱 1줄) 최초 REST 요청 경로 확인
+      once("__LB_PROBE_FETCH__", () => {
+        if (u.includes("/rest/")) log("PROBE FETCH.url = " + u);
+      });
+
       try {
-        const url = (typeof input === "string") ? input : (input && input.url ? input.url : "");
-        const u0 = normalizeUrl(url);
+        // uploads GET
+        if (isUploadsPath(u)) return await handleUploadsGET(u);
 
-        // 1) uploads GET
-        if (isUploadGetPath(u0)) {
-          return await handleUploadsGET(u0);
-        }
-
-        // 2) upload API
-        if (isUploadApi(u0)) {
-          // fetch(Request)면 request.formData()로 안전하게 파싱 가능
+        // rest 전체
+        if (isRest(u)) {
+          // Request.formData() 경로
           if (typeof input !== "string" && input instanceof Request) {
-            const fd = await input.formData();
-            return await handleUploadFromFormData(u0, fd);
+            const ct = input.headers.get("content-type") || "";
+            if (ct.includes("multipart/form-data")) {
+              const fd = await input.formData();
+              return await handleUploadFormData(u, fd);
+            }
+            // JSON 등
+            return await handleRestJSON(u, { method: input.method, body: await input.clone().text() });
           }
 
           // fetch(url, {body: FormData})
-          if (init && init.body && init.body instanceof FormData) {
-            return await handleUploadFromFormData(u0, init.body);
+          if (init && init.body instanceof FormData) {
+            return await handleUploadFormData(u, init.body);
           }
 
-          // 그 외는 원래 fetch로 (혹시 서버가 있는 환경 대비)
-          return await _fetch(input, init);
-        }
-
-        // 3) dataTable API
-        if (isDataTableApi(u0)) {
-          return await handleDataTable(u0, init || {});
+          // fetch(url, json)
+          return await handleRestJSON(u, init || {});
         }
 
         return await _fetch(input, init);
       } catch (e) {
-        // fail-safe: 원래 fetch로
         return await _fetch(input, init);
       }
     };
   }
 
-  function installXHRInterceptor() {
-    if (window.__LOCAL_BACKEND_XHR_INSTALLED__) return;
-    window.__LOCAL_BACKEND_XHR_INSTALLED__ = true;
+  function installXHR() {
+    if (window.__LB_XHR_V2__) return;
+    window.__LB_XHR_V2__ = true;
 
-    const NativeXHR = window.XMLHttpRequest;
+    const XHRp = XMLHttpRequest.prototype;
+    const _open = XHRp.open;
+    const _send = XHRp.send;
 
-    function FakeXHR() {
-      const xhr = new NativeXHR();
+    XHRp.open = function (method, url, async, user, pass) {
+      this.__lb = this.__lb || {};
+      this.__lb.method = String(method || "GET").toUpperCase();
+      this.__lb.url = normalizeUrl(url);
 
-      // 상태 저장
-      xhr.__lb = {
-        method: "GET",
-        url: "",
-        async: true,
-        handled: false,
-        requestBody: null,
-      };
+      // (딱 1줄) 최초 XHR 요청 경로 확인
+      once("__LB_PROBE_XHR__", () => {
+        log("PROBE XHR.url = " + this.__lb.url);
+      });
 
-      const _open = xhr.open;
-      xhr.open = function (method, url, async = true, ...rest) {
-        xhr.__lb.method = String(method || "GET").toUpperCase();
-        xhr.__lb.url = url;
-        xhr.__lb.async = async !== false;
+      return _open.call(this, method, this.__lb.url, async, user, pass);
+    };
 
-        // entry./ 오타 보정만 여기서도 1회
-        const fixedUrl = normalizeUrl(url);
+    XHRp.send = function (body) {
+      const method = (this.__lb && this.__lb.method) ? this.__lb.method : "GET";
+      const url = (this.__lb && this.__lb.url) ? this.__lb.url : "";
 
-        return _open.call(xhr, method, fixedUrl, async, ...rest);
-      };
+      // uploads GET
+      if (method === "GET" && isUploadsPath(url)) {
+        const xhr = this;
+        (async () => {
+          const res = await handleUploadsGET(url);
+          const buf = await res.arrayBuffer();
 
-      const _send = xhr.send;
-      xhr.send = function (body) {
-        const url = normalizeUrl(xhr.__lb.url);
+          try {
+            Object.defineProperty(xhr, "status", { value: res.status });
+            Object.defineProperty(xhr, "readyState", { value: 4 });
+            Object.defineProperty(xhr, "response", { value: buf });
+            Object.defineProperty(xhr, "responseText", { value: "" });
+          } catch (_) {}
 
-        // uploads GET은 createjs/preloadjs가 XHR로 때릴 수 있음 → 여기서 처리
-        if (isUploadGetPath(url) && xhr.__lb.method === "GET") {
-          xhr.__lb.handled = true;
-          (async () => {
-            const res = await handleUploadsGET(url);
+          xhr.onload && xhr.onload();
+          xhr.onreadystatechange && xhr.onreadystatechange();
+        })();
+        return;
+      }
 
-            xhr.status = res.status;
-            xhr.readyState = 4;
+      // /rest/** 처리
+      if (isRest(url)) {
+        const xhr = this;
 
-            // responseType 대응(최소)
-            const rt = xhr.responseType || "";
-            if (rt === "arraybuffer") {
-              const ab = await res.arrayBuffer();
-              xhr.response = ab;
-            } else if (rt === "blob") {
-              const b = await res.blob();
-              xhr.response = b;
-            } else {
-              const t = await res.text();
-              xhr.responseText = t;
-              xhr.response = t;
-            }
+        (async () => {
+          let res;
 
-            try { xhr.onreadystatechange && xhr.onreadystatechange(); } catch (_) {}
-            try { xhr.onload && xhr.onload(); } catch (_) {}
-          })();
-          return;
-        }
+          // FormData면 업로드
+          if (body instanceof FormData) {
+            res = await handleUploadFormData(url, body);
+          } else {
+            // JSON 등
+            res = await handleRestJSON(url, { method, body });
+          }
 
-        // upload API도 XHR로 올 수 있음 → FormData면 처리
-        if (isUploadApi(url) && (xhr.__lb.method === "POST" || xhr.__lb.method === "PUT")) {
-          xhr.__lb.handled = true;
-          (async () => {
-            let res;
-            if (body instanceof FormData) {
-              res = await handleUploadFromFormData(url, body);
-            } else {
-              // FormData가 아니면 원래로 보내되, 실패할 수 있음
-              res = null;
-            }
+          const txt = await res.text();
 
-            if (!res) {
-              // fallback
-              _send.call(xhr, body);
-              return;
-            }
+          try {
+            Object.defineProperty(xhr, "status", { value: res.status });
+            Object.defineProperty(xhr, "readyState", { value: 4 });
+            Object.defineProperty(xhr, "responseText", { value: txt });
+            Object.defineProperty(xhr, "response", { value: txt });
+          } catch (_) {}
 
-            xhr.status = res.status;
-            xhr.readyState = 4;
+          xhr.onload && xhr.onload();
+          xhr.onreadystatechange && xhr.onreadystatechange();
+        })();
 
-            const txt = await res.text();
-            xhr.responseText = txt;
-            xhr.response = txt;
+        return;
+      }
 
-            try { xhr.onreadystatechange && xhr.onreadystatechange(); } catch (_) {}
-            try { xhr.onload && xhr.onload(); } catch (_) {}
-          })();
-          return;
-        }
-
-        // datatable API도 XHR로 올 수 있음
-        if (isDataTableApi(url)) {
-          xhr.__lb.handled = true;
-          (async () => {
-            const init = { method: xhr.__lb.method };
-            if (body != null) init.body = body;
-            const res = await handleDataTable(url, init);
-
-            xhr.status = res.status;
-            xhr.readyState = 4;
-            const txt = await res.text();
-            xhr.responseText = txt;
-            xhr.response = txt;
-
-            try { xhr.onreadystatechange && xhr.onreadystatechange(); } catch (_) {}
-            try { xhr.onload && xhr.onload(); } catch (_) {}
-          })();
-          return;
-        }
-
-        return _send.call(xhr, body);
-      };
-
-      return xhr;
-    }
-
-    // 전역 교체
-    window.XMLHttpRequest = FakeXHR;
+      return _send.call(this, body);
+    };
   }
 
-  const LocalBackend = {
-    // index.html에서 BASE 탐지한 뒤 호출 권장
+  window.LocalBackend = {
     install(BASE = "./") {
-      installFetchInterceptor(BASE);
-      installXHRInterceptor();
-
-      // 디버그 출력(원하면 주석)
-      try {
-        if (window.bootLine) window.bootLine("LocalBackend installed (uploads+datatable via IndexedDB)", "ok");
-      } catch (_) {}
-    },
-
-    // 디버깅용 공개
-    __debug: {
-      createFileId,
-      buildUploadPath,
-      storeBlob,
-      loadBlob,
-      storeJSON,
-      loadJSON,
+      // BASE는 지금은 저장키에 굳이 안 씀. (요청은 /rest, ./uploads 등으로 들어옴)
+      installFetch();
+      installXHR();
+      log("LocalBackend(v2) installed: prototype-patch XHR + catch-all /rest/**");
     }
   };
-
-  window.LocalBackend = LocalBackend;
 })();
