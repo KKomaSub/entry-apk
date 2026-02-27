@@ -112,7 +112,7 @@
         if (await probeBase(c)) { BASE = c; break; }
       }
       bootLine("BASE = " + BASE, "ok");
-
+      if (window.LocalBackend) LocalBackend.install(BASE);
       // CSS
       const cssList = [
         BASE + "lib/entry-tool/dist/entry-tool.css",
