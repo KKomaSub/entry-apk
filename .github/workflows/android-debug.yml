@@ -77,13 +77,9 @@ jobs:
 
           yarn --cwd entry-offline install --frozen-lockfile || yarn --cwd entry-offline install
 
-          # ✅ Node18 + old webpack 해시 문제 우회
           export NODE_OPTIONS=--openssl-legacy-provider
-
-          # entry-offline에 build script가 없는 경우가 있어서 webpack 직접
           yarn --cwd entry-offline webpack || true
 
-          # renderer_build 확인
           find entry-offline -maxdepth 8 -type f -name "init.bundle.js" -print | head -n 20 || true
           find entry-offline -maxdepth 8 -type f -name "render.bundle.js" -print | head -n 20 || true
           test -f entry-offline/src/renderer_build/init.bundle.js
@@ -113,7 +109,7 @@ jobs:
           test -f "www/renderer_build/render.bundle.js"
 
       # ✅ 핵심: 오브젝트/모양/소리/테이블 UI에 필요한 추가 라이브러리들을 로컬로 확보
-      - name: Add UI dependency libs (socket.io, codemirror addons, fuzzy, jshint, python, entry util)
+      - name: Add UI dependency libs (react18, socket.io, codemirror addons, fuzzy, jshint, python, entry util)
         run: |
           set -Eeuo pipefail
 
@@ -128,18 +124,18 @@ jobs:
             fi
           }
 
-          # React / ReactDOM (entry-lms + tool UI)
-          dl "https://unpkg.com/react@17/umd/react.production.min.js"     "www/lib/react/umd/react.production.min.js"
-          dl "https://unpkg.com/react-dom@17/umd/react-dom.production.min.js" "www/lib/react-dom/umd/react-dom.production.min.js"
+          # ✅ React 18로 고정 (entry-lms와 궁합 이슈 방지)
+          dl "https://unpkg.com/react@18/umd/react.production.min.js"     "www/lib/react/umd/react.production.min.js"
+          dl "https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" "www/lib/react-dom/umd/react-dom.production.min.js"
 
           # entry-lms (UI shell)
           dl "https://playentry.org/lib/entry-lms/dist/assets/app.css" "www/lib/entry-lms/dist/assets/app.css"
           dl "https://playentry.org/lib/entry-lms/dist/assets/app.js"  "www/lib/entry-lms/dist/assets/app.js"
 
-          # socket.io client (entry-tool 내부에서 필요할 때가 많음)
+          # socket.io client
           dl "https://playentry.org/lib/socket.io-client/socket.io.js" "www/lib/socket.io-client/socket.io.js"
 
-          # codemirror addons (텍스트/파이썬/힌트/린트)
+          # codemirror addons
           dl "https://playentry.org/lib/codemirror/addon/hint/show-hint.js"       "www/lib/codemirror/addon/hint/show-hint.js"
           dl "https://playentry.org/lib/codemirror/addon/hint/show-hint.css"      "www/lib/codemirror/addon/hint/show-hint.css"
           dl "https://playentry.org/lib/codemirror/addon/lint/lint.js"            "www/lib/codemirror/addon/lint/lint.js"
@@ -153,23 +149,60 @@ jobs:
           dl "https://playentry.org/lib/fuzzy/lib/fuzzy.js" "www/lib/fuzzy/lib/fuzzy.js"
           dl "https://playentry.org/js/ws/python.js"     "www/js/ws/python.js"
 
-          # entry-js util 일부 (예제에 있는 것)
+          # entry-js util 일부
           dl "https://playentry.org/lib/entry-js/extern/util/filbert.js"          "www/lib/entryjs/extern/util/filbert.js"
           dl "https://playentry.org/lib/entry-js/extern/util/CanvasInput.js"      "www/lib/entryjs/extern/util/CanvasInput.js"
           dl "https://playentry.org/lib/entry-js/extern/util/ndgmr.Collision.js"  "www/lib/entryjs/extern/util/ndgmr.Collision.js"
 
-      # ✅ 옵션: PNG 재인코딩은 너무 오래 걸리면 OFF 권장 (필요시만)
-      # - name: Re-encode PNGs (fast parallel, skip broken)
-      #   run: |
-      #     set -Eeuo pipefail
-      #     sudo apt-get update -y
-      #     sudo apt-get install -y imagemagick
-      #     find www -type f -name "*.png" -print0 | xargs -0 -n 1 -P "$(nproc)" bash -lc '
-      #       f="$1"
-      #       [ -s "$f" ] || exit 0
-      #       convert "$f" -strip -define png:color-type=6 -define png:bit-depth=8 PNG32:"$f".tmp 2>/dev/null || exit 0
-      #       mv "$f".tmp "$f"
-      #     ' _
+      # ✅✅ 핵심: 하위폴더 이미지가 다시 안 보일 때의 1방 해결
+      #   - Entry가 /images/hw/... 같은 경로로 찾는 리소스는 www/images/ 아래에 실제로 있어야 안정적
+      #   - 따라서 www/lib/entryjs/images/** (또는 entry-js) 를 www/images/** 로 "하위폴더 포함" 미러링
+      - name: Mirror entryjs images into www/images (keep subfolders)
+        run: |
+          set -Eeuo pipefail
+          mkdir -p www/images
+
+          if [ -d "www/lib/entryjs/images" ]; then
+            cp -a "www/lib/entryjs/images/." "www/images/"
+          fi
+
+          if [ -d "www/lib/entry-js/images" ]; then
+            cp -a "www/lib/entry-js/images/." "www/images/"
+          fi
+
+          echo "== images/hw check =="
+          ls -la "www/images/hw" | head -n 50 || true
+
+      # ✅ (선택) index.html이 entry-lms css / codemirror addon css를 안 불러오면 UI(오브젝트 추가 등) 비정상
+      #   - 당신이 index에서 cssList로 로딩하면 이 스텝은 불필요
+      - name: Patch index.html to include entry-lms + codemirror addon CSS (if missing)
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import re, pathlib
+
+          p = pathlib.Path("www/index.html")
+          s = p.read_text("utf-8", errors="ignore")
+
+          # head에 entry-lms/app.css / codemirror addon css가 "정적 link"로 없으면 1회 삽입
+          need = [
+            ('lib/entry-lms/dist/assets/app.css', '<link rel="stylesheet" href="lib/entry-lms/dist/assets/app.css">'),
+            ('lib/codemirror/addon/hint/show-hint.css', '<link rel="stylesheet" href="lib/codemirror/addon/hint/show-hint.css">'),
+            ('lib/codemirror/addon/lint/lint.css', '<link rel="stylesheet" href="lib/codemirror/addon/lint/lint.css">'),
+          ]
+
+          insert = []
+          for key, tag in need:
+            if key not in s:
+              insert.append(tag)
+
+          if insert:
+            s = re.sub(r'(</title>\s*)', r'\\1\n' + "\n".join(insert) + "\n", s, count=1, flags=re.I)
+            p.write_text(s, "utf-8")
+            print("[patch-index] inserted:", len(insert))
+          else:
+            print("[patch-index] nothing to do")
+          PY
 
       - name: Ensure Android platform
         run: |
@@ -206,7 +239,7 @@ jobs:
           cd android
           ./gradlew assembleDebug
 
-      - name: Inspect APK contents
+      - name: Inspect APK contents (images subfolders + lms/react)
         run: |
           set -Eeuo pipefail
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
@@ -215,6 +248,10 @@ jobs:
           echo "== has react/lms =="
           unzip -l "$APK" | grep -E "assets/public/lib/react/umd/react\.production\.min\.js" || true
           unzip -l "$APK" | grep -E "assets/public/lib/entry-lms/dist/assets/app\.js" || true
+          unzip -l "$APK" | grep -E "assets/public/lib/entry-lms/dist/assets/app\.css" || true
+
+          echo "== images/hw samples =="
+          unzip -l "$APK" | grep -E "assets/public/images/hw/" | head -n 20 || true
 
           echo "== images count =="
           unzip -l "$APK" | grep -E "assets/public/images/" | wc -l || true
