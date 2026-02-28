@@ -173,7 +173,8 @@ const jsList = [
 
   // 🔹 LMS UI shell (모달/오브젝트/테이블 패널)
   BASE + "lib/entry-lms/dist/assets/app.js",
-
+BASE + "renderer_build/init.bundle.js",
+BASE + "renderer_build/render.bundle.js",
   // 🔹 Entry Tool (버튼/상단 UI)
   BASE + "lib/entry-tool/dist/entry-tool.js",
 
@@ -267,7 +268,63 @@ Entry.creationChangedEvent = new Entry.Event(window);
     '[class*="modal"],[class*="popup"],[class*="dialog"],[class*="layer"],' +
     '[id*="modal"],[id*="popup"],[id*="dialog"]'
   ));
+function __recoverIfFrozen(reason) {
+  bootLine("RECOVER start: " + reason, "bad");
 
+  // 1) 흔한 백드롭/오버레이들 제거/무력화
+  const killers = document.querySelectorAll(
+    '.modal-backdrop,.backdrop,.dimmed,.overlay,.ReactModal__Overlay,[class*="backdrop"],[class*="dimmed"],[class*="overlay"]'
+  );
+  killers.forEach((el) => {
+    el.style.display = "none";
+    el.style.pointerEvents = "none";
+  });
+
+  // 2) body/html 잠금 해제
+  document.documentElement.style.pointerEvents = "auto";
+  document.body.style.pointerEvents = "auto";
+  document.body.style.overflow = "auto";
+
+  // 3) 혹시 남아있는 전체화면 div(pointer-events:all) 제거
+  const full = document.querySelectorAll('body *');
+  for (const el of full) {
+    const st = window.getComputedStyle(el);
+    if (
+      (st.position === "fixed" || st.position === "absolute") &&
+      st.zIndex !== "auto" &&
+      Number(st.zIndex) > 1000 &&
+      (st.pointerEvents === "auto" || st.pointerEvents === "all") &&
+      (st.backgroundColor !== "rgba(0, 0, 0, 0)" && st.backgroundColor !== "transparent")
+    ) {
+      // 너무 공격적이면 주석 처리 가능
+      el.style.pointerEvents = "none";
+    }
+  }
+
+  bootLine("RECOVER done", "ok");
+}
+
+// ✅ “열기 시도 후 300ms 내에 모달이 안 보이면 복구”
+function __watchModalOrRecover(tag, waitMs = 300) {
+  setTimeout(() => {
+    const modalLike = document.querySelectorAll(
+      '[role="dialog"],.ReactModal__Content,[class*="modal"],[class*="dialog"],[class*="popup"]'
+    );
+
+    // “보이는” 모달이 하나라도 있으면 OK
+    let visible = false;
+    modalLike.forEach((el) => {
+      const st = window.getComputedStyle(el);
+      if (st.display !== "none" && st.visibility !== "hidden" && Number(st.opacity || "1") > 0.01) {
+        visible = true;
+      }
+    });
+
+    if (!visible) {
+      __recoverIfFrozen("modal not visible after open (" + tag + ")");
+    }
+  }, waitMs);
+}
   bootLine("FORCE VISIBILITY: nodes=" + nodes.length, nodes.length ? "ok" : "bad");
 
   nodes.forEach((el) => {
@@ -381,6 +438,7 @@ setTimeout(() => {
         bootLine("CLICK pictureAddButton -> try Command[702].do()", "dim");
         try {
           Entry.Command[702].do();
+          __watchModalOrRecover("Command702", 350);
           bootLine("Command[702].do() called", "ok");
         } catch (err) {
           bootLine("Command[702] threw: " + (err?.stack || err), "bad");
