@@ -81,13 +81,11 @@ jobs:
       # ✅ entry-offline renderer_build 생성
       - name: Build entry-offline renderer bundles
         env:
-          # webpack(구버전) + node18 openssl 이슈 방지
           NODE_OPTIONS: --openssl-legacy-provider
         run: |
           set -Eeuo pipefail
           corepack enable || true
           yarn --cwd entry-offline install --frozen-lockfile || yarn --cwd entry-offline install
-          # entry-offline은 스크립트가 없을 수 있어 webpack 직접 실행
           yarn --cwd entry-offline webpack
           echo "== find renderer_build output =="
           find entry-offline -maxdepth 8 -type d -name "renderer_build" -print | head -n 20 || true
@@ -118,11 +116,55 @@ jobs:
           test -f "www/renderer_build/init.bundle.js"
           test -f "www/renderer_build/render.bundle.js"
 
+      # ✅✅ (추가) 오브젝트/모양/소리/테이블 UI에 필요한 라이브러리 로컬 확보
+      - name: Add UI dependency libs (react, entry-lms, socket.io, codemirror addons, jshint, fuzzy, python, util)
+        run: |
+          set -Eeuo pipefail
+          dl () {
+            url="$1"; out="$2"
+            mkdir -p "$(dirname "$out")"
+            if [ ! -f "$out" ]; then
+              echo "download: $out"
+              curl -L "$url" -o "$out"
+            else
+              echo "skip exists: $out"
+            fi
+          }
+
+          # React / ReactDOM (entry-lms + tool UI)
+          dl "https://unpkg.com/react@17/umd/react.production.min.js"          "www/lib/react/umd/react.production.min.js"
+          dl "https://unpkg.com/react-dom@17/umd/react-dom.production.min.js" "www/lib/react-dom/umd/react-dom.production.min.js"
+
+          # entry-lms (UI shell) - 오브젝트/모양/소리/테이블 패널 쪽이 여기 의존하는 경우 많음
+          dl "https://playentry.org/lib/entry-lms/dist/assets/app.css" "www/lib/entry-lms/dist/assets/app.css"
+          dl "https://playentry.org/lib/entry-lms/dist/assets/app.js"  "www/lib/entry-lms/dist/assets/app.js"
+
+          # socket.io client
+          dl "https://playentry.org/lib/socket.io-client/socket.io.js" "www/lib/socket.io-client/socket.io.js"
+
+          # codemirror addons
+          dl "https://playentry.org/lib/codemirror/addon/hint/show-hint.js"        "www/lib/codemirror/addon/hint/show-hint.js"
+          dl "https://playentry.org/lib/codemirror/addon/hint/show-hint.css"       "www/lib/codemirror/addon/hint/show-hint.css"
+          dl "https://playentry.org/lib/codemirror/addon/lint/lint.js"             "www/lib/codemirror/addon/lint/lint.js"
+          dl "https://playentry.org/lib/codemirror/addon/lint/lint.css"            "www/lib/codemirror/addon/lint/lint.css"
+          dl "https://playentry.org/lib/codemirror/addon/selection/active-line.js" "www/lib/codemirror/addon/selection/active-line.js"
+          dl "https://playentry.org/lib/codemirror/mode/javascript/javascript.js"  "www/lib/codemirror/mode/javascript/javascript.js"
+          dl "https://playentry.org/lib/codemirror/addon/hint/javascript-hint.js"  "www/lib/codemirror/addon/hint/javascript-hint.js"
+
+          # jshint / fuzzy / python
+          dl "https://playentry.org/js/jshint.js"                 "www/js/jshint.js"
+          dl "https://playentry.org/lib/fuzzy/lib/fuzzy.js"       "www/lib/fuzzy/lib/fuzzy.js"
+          dl "https://playentry.org/js/ws/python.js"              "www/js/ws/python.js"
+
+          # util (가끔 entry.min/tool에서 찾음)
+          dl "https://playentry.org/lib/entry-js/extern/util/filbert.js"         "www/lib/entryjs/extern/util/filbert.js"
+          dl "https://playentry.org/lib/entry-js/extern/util/CanvasInput.js"     "www/lib/entryjs/extern/util/CanvasInput.js"
+          dl "https://playentry.org/lib/entry-js/extern/util/ndgmr.Collision.js" "www/lib/entryjs/extern/util/ndgmr.Collision.js"
+
       # ✅✅ 핵심: @entrylabs/entry 와 @entrylabs/entry. 경로 둘 다 제공 (entry./ 오타도 그대로 흡수)
       - name: Alias @entrylabs/entry and @entrylabs/entry. to entryjs assets
         run: |
           set -Eeuo pipefail
-          # entryjs 자산이 있는지 확인
           if [ ! -d "www/lib/entryjs" ]; then
             echo "ERROR: www/lib/entryjs not found. fetch_entry_assets.sh가 entryjs를 내려받는지 확인 필요"
             find www/lib -maxdepth 3 -type d | head -n 200 || true
@@ -130,20 +172,33 @@ jobs:
           fi
 
           mkdir -p "www/lib/@entrylabs/entry" "www/lib/@entrylabs/entry."
-          # rsync가 없을 수 있으니 cp -a 사용
           rm -rf "www/lib/@entrylabs/entry/images" "www/lib/@entrylabs/entry./images" || true
           cp -a "www/lib/entryjs/." "www/lib/@entrylabs/entry/"
           cp -a "www/lib/entryjs/." "www/lib/@entrylabs/entry./"
 
-          # 클릭 사운드가 존재하는지(없으면 또 멈출 수 있음)
           echo "== check click.mp3 =="
           ls -la "www/lib/@entrylabs/entry./images/sounds/click.mp3" || true
           ls -la "www/lib/@entrylabs/entry/images/sounds/click.mp3" || true
 
-          # ✅ 하위폴더 이미지(예: hw)도 실제로 있는지 확인 로그 (깨짐 재발 잡기용)
           echo "== check hw dir =="
           ls -la "www/lib/@entrylabs/entry./images/hw" || true
           ls -la "www/lib/@entrylabs/entry/images/hw" || true
+
+      # ✅✅ (추가) /images/hw/... 같은 “루트 images” 참조를 흡수하기 위해 entryjs/images를 www/images로 미러링
+      - name: Mirror entryjs images to root www/images (fix /images/hw/* broken)
+        run: |
+          set -Eeuo pipefail
+          if [ -d "www/lib/entryjs/images" ]; then
+            mkdir -p "www/images"
+            cp -a "www/lib/entryjs/images/." "www/images/"
+            echo "MIRRORED: www/lib/entryjs/images -> www/images"
+          fi
+
+          echo "== sanity check counts =="
+          echo -n "entryjs hw count: "
+          find "www/lib/entryjs/images/hw" -type f 2>/dev/null | wc -l || true
+          echo -n "root images hw count: "
+          find "www/images/hw" -type f 2>/dev/null | wc -l || true
 
       - name: Ensure Android platform
         run: |
@@ -182,7 +237,7 @@ jobs:
           cd android
           ./gradlew assembleDebug
 
-      - name: Inspect APK contents (must include renderer_build + entry assets)
+      - name: Inspect APK contents (must include renderer_build + entry assets + images/hw)
         run: |
           set -Eeuo pipefail
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
@@ -194,8 +249,15 @@ jobs:
           echo "== @entrylabs/entry. alias check (click.mp3) =="
           unzip -l "$APK" | grep -F "assets/public/lib/@entrylabs/entry./images/sounds/click.mp3" || true
 
-          echo "== entryjs images/hw count =="
+          echo "== entryjs images/hw count (inside apk) =="
           unzip -l "$APK" | grep -E "assets/public/lib/entryjs/images/hw/" | wc -l || true
+
+          echo "== root images/hw count (inside apk) =="
+          unzip -l "$APK" | grep -E "assets/public/images/hw/" | wc -l || true
+
+          echo "== has react/lms (inside apk) =="
+          unzip -l "$APK" | grep -E "assets/public/lib/react/umd/react\.production\.min\.js" || true
+          unzip -l "$APK" | grep -E "assets/public/lib/entry-lms/dist/assets/app\.js" || true
 
       - name: Cleanup old artifacts (keep latest 1)
         uses: actions/github-script@v7
