@@ -415,13 +415,7 @@ function closeObjectAdd() {
   bootLine("CLOSED via DOM fallback", "dim");
 }
 // ✅ 1회 자동 테스트
-setTimeout(() => {
-  openObjectAdd();
 
-  // 1초 후 닫기
-  setTimeout(closeObjectAdd, 5000);
-
-}, 900);
       // ✅ 오브젝트 추가 버튼/커맨드 디버그 (화면 안 뜨는 원인 1초컷)
 setTimeout(() => {
   try {
@@ -518,14 +512,7 @@ if (typeof __orig702 === "function") {
 }
 
 // ✅ 강제 오픈 테스트 (1회)
-setTimeout(() => {
-  try {
-    bootLine("FORCE OPEN: Command[702].do()", "dim");
-    Entry.Command[702].do();
-  } catch (e) {
-    bootLine("FORCE OPEN failed: " + String(e?.stack || e), "bad");
-  }
-}, 800);
+
  function patchAddButtons() {
     try {
       if (!window.Entry || !Entry.playground || !Entry.Command) return false;
