@@ -108,6 +108,17 @@ jobs:
           test -f www/index.html
           echo "OK: www/index.html exists"
           ls -la www | head -n 120 || true
+      - name: Add React + Entry-LMS assets (local)
+        run: |
+          set -Eeuo pipefail
+          mkdir -p www/lib/react/umd www/lib/react-dom/umd
+          curl -L https://unpkg.com/react@17/umd/react.production.min.js -o www/lib/react/umd/react.production.min.js
+          curl -L https://unpkg.com/react-dom@17/umd/react-dom.production.min.js -o www/lib/react-dom/umd/react-dom.production.min.js
+
+          # Entry LMS (UI shell) - playentry에서 그대로 받아 로컬로 둠
+          mkdir -p www/lib/entry-lms/dist/assets
+          curl -L https://playentry.org/lib/entry-lms/dist/assets/app.css -o www/lib/entry-lms/dist/assets/app.css
+          curl -L https://playentry.org/lib/entry-lms/dist/assets/app.js  -o www/lib/entry-lms/dist/assets/app.js
 
       # ✅ entry-offline 리소스 + 번들만 복사 (index.html 덮어쓰기 금지)
       - name: Copy entry-offline resources into www (keep index.html)
