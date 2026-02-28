@@ -114,12 +114,13 @@
       bootLine("BASE = " + BASE, "ok");
       if (window.LocalBackend) LocalBackend.install(BASE);
       // CSS
-      const cssList = [
-        BASE + "lib/entry-tool/dist/entry-tool.css",
-        BASE + "lib/entryjs/dist/entry.css",
-        BASE + "lib/codemirror/codemirror.css",
-        BASE + "overrides.css",
-      ];
+const cssList = [
+  BASE + "lib/entry-tool/dist/entry-tool.css",
+  BASE + "lib/entry-lms/dist/assets/app.css",   // ✅ 추가
+  BASE + "lib/entryjs/dist/entry.css",
+  BASE + "lib/codemirror/codemirror.css",
+  BASE + "overrides.css",
+];
       for (const href of cssList) {
         const r = await loadCSS(href);
         bootLine((r.ok ? "OK   CSS  " : "MISS CSS ") + href, r.ok ? "ok" : "bad");
@@ -133,38 +134,44 @@
       }
 
       // core libs
-      const jsList = [
-        BASE + "lib/lodash/dist/lodash.min.js",
-        BASE + "lib/jquery/jquery.min.js",
-        BASE + "lib/jquery-ui/ui/minified/jquery-ui.min.js",
+const jsList = [
+  BASE + "lib/lodash/dist/lodash.min.js",
+  BASE + "lib/jquery/jquery.min.js",
+  BASE + "lib/jquery-ui/ui/minified/jquery-ui.min.js",
 
-        BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
-        BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
-        BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
-        BASE + "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js", // optional
+  BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
+  BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
+  BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
 
-        BASE + "lib/velocity/velocity.min.js",
+  BASE + "lib/velocity/velocity.min.js",
 
-        BASE + "lib/codemirror/codemirror.js",
-        BASE + "lib/codemirror/vim.js", // optional
+  BASE + "lib/codemirror/codemirror.js",
+  BASE + "lib/codemirror/vim.js",
 
-        BASE + "lib/entry-tool/dist/entry-tool.js",
+  // ✅ React 먼저
+  BASE + "lib/react/umd/react.production.min.js",
+  BASE + "lib/react-dom/umd/react-dom.production.min.js",
 
-        BASE + "lib/entryjs/extern/lang/ko.js",
-        BASE + "lib/entryjs/extern/util/static.js",
-        BASE + "lib/entryjs/extern/util/handle.js",
-        BASE + "lib/entryjs/extern/util/bignumber.min.js",
-        BASE + "lib/module/legacy-video/index.js",
+  // ✅ LMS UI shell
+  BASE + "lib/entry-lms/dist/assets/app.js",
 
-        // sound editor (optional)
-        BASE + "lib/external/sound/sound-editor.js",
+  // ✅ tool은 LMS/React 뒤
+  BASE + "lib/entry-tool/dist/entry-tool.js",
 
-        // entry core
-        BASE + "lib/entryjs/dist/entry.min.js",
+  BASE + "lib/entryjs/extern/lang/ko.js",
+  BASE + "lib/entryjs/extern/util/static.js",
+  BASE + "lib/entryjs/extern/util/handle.js",
+  BASE + "lib/entryjs/extern/util/bignumber.min.js",
+  BASE + "lib/module/legacy-video/index.js",
 
-        // paint
-        BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
-      ];
+  BASE + "lib/external/sound/sound-editor.js",
+
+  // ✅ Entry 본체
+  BASE + "lib/entryjs/dist/entry.min.js",
+
+  // ✅ paint
+  BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
+];
 
       for (const src of jsList) {
         const optional =
@@ -218,7 +225,8 @@
       }
 
       bootLine("HREF = " + location.href, "dim");
-
+window.PUBLIC_PATH_FOR_ENTRYJS = "lib/entryjs/dist/";
+Entry.creationChangedEvent = new Entry.Event(window);
       bootLine("Starting Entry.init …", "dim");
 
       Entry.init(document.getElementById("entryContainer"), {
