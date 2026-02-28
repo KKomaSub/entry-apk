@@ -290,6 +290,81 @@ setTimeout(() => {
     bootLine("DEBUG install failed: " + (e?.stack || e), "bad");
   }
 }, 800);
+      // ✅ Promise 에러는 window.onerror에 안 찍힐 수 있음 (필수)
+window.addEventListener("unhandledrejection", (ev) => {
+  bootLine("UNHANDLED REJECTION:", "bad");
+  bootLine(String(ev && (ev.reason?.stack || ev.reason) || ev), "bad");
+});
+
+// ✅ 모달이 DOM에 붙는지 감시 (안 뜨는 원인: 생성은 되는데 CSS로 숨겨짐)
+const __mo = new MutationObserver((muts) => {
+  for (const m of muts) {
+    for (const n of m.addedNodes) {
+      if (!(n instanceof HTMLElement)) continue;
+      const s = (n.className || "") + " " + (n.id || "");
+      if (/modal|popup|dialog|layer|lms|portal/i.test(s) || n.querySelector?.('[class*="modal"],[class*="popup"],[class*="dialog"]')) {
+        bootLine("DOM ADD: " + (n.tagName + "#" + (n.id||"") + "." + (n.className||"")).slice(0, 120), "dim");
+      }
+    }
+  }
+});
+__mo.observe(document.documentElement, { childList: true, subtree: true });
+
+// ✅ 모달/포털이 “있는데 안 보이는” 경우를 위해 강제 가시화 CSS 주입
+const __style = document.createElement("style");
+__style.textContent = `
+  #entry-lms-root, #modal-root, #portal-root, #toast-root { position: fixed; inset: 0; z-index: 2147483647; pointer-events: none; }
+  #entry-lms-root *, #modal-root *, #portal-root *, #toast-root * { pointer-events: auto; }
+  [class*="modal"],[class*="popup"],[class*="dialog"],[class*="layer"] { z-index: 2147483647 !important; }
+`;
+document.head.appendChild(__style);
+
+// ✅ Command[702].do() 래핑해서 "실제로 호출되는지/리턴이 뭔지/호출 직후 DOM 상태"를 찍기
+const __orig702 = Entry?.Command?.[702]?.do;
+if (typeof __orig702 === "function") {
+  Entry.Command[702].do = function () {
+    bootLine("CALL Command[702].do()", "dim");
+    let ret;
+    try {
+      ret = __orig702.apply(this, arguments);
+      bootLine("RET Command[702] = " + String(ret), "dim");
+    } catch (e) {
+      bootLine("THROW Command[702]: " + String(e?.stack || e), "bad");
+      throw e;
+    }
+
+    // ✅ 0.1초 뒤: 실제로 모달이 생겼는지 DOM 검사
+    setTimeout(() => {
+      const roots = ["entry-lms-root","modal-root","portal-root","toast-root"];
+      for (const id of roots) {
+        const el = document.getElementById(id);
+        bootLine(`ROOT ${id} exists=${!!el} children=${el?.children?.length ?? "N/A"}`, el ? "ok" : "bad");
+      }
+
+      const hits = document.querySelectorAll('[class*="modal"],[class*="popup"],[class*="dialog"],[class*="layer"]');
+      bootLine("FOUND modal-like nodes = " + hits.length, hits.length ? "ok" : "bad");
+      if (hits[0]) {
+        const cs = getComputedStyle(hits[0]);
+        bootLine("FIRST modal display=" + cs.display + " vis=" + cs.visibility + " op=" + cs.opacity, "dim");
+      }
+    }, 120);
+
+    return ret;
+  };
+  bootLine("PATCHED: wrap Command[702].do", "ok");
+} else {
+  bootLine("WARN: Command[702].do not a function at patch time", "bad");
+}
+
+// ✅ 강제 오픈 테스트 (1회)
+setTimeout(() => {
+  try {
+    bootLine("FORCE OPEN: Command[702].do()", "dim");
+    Entry.Command[702].do();
+  } catch (e) {
+    bootLine("FORCE OPEN failed: " + String(e?.stack || e), "bad");
+  }
+}, 800);
  function patchAddButtons() {
     try {
       if (!window.Entry || !Entry.playground || !Entry.Command) return false;
@@ -320,7 +395,7 @@ setTimeout(() => {
     const ok = patchAddButtons();
     if (window.bootLine) bootLine("PATCH pictureAddButton -> Command[702]: " + (ok ? "OK" : "MISS"), ok ? "ok" : "bad");
       bootLine("BOOT OK: init+loadProject called, hiding logs…", "dim");
-      hideBootLater(1500);
+      hideBootLater(2000);
     }
 
     document.addEventListener("DOMContentLoaded", () => {
