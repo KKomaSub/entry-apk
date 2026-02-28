@@ -135,41 +135,66 @@ const cssList = [
 
       // core libs
 const jsList = [
+
+  // 🔹 기본 유틸
   BASE + "lib/lodash/dist/lodash.min.js",
   BASE + "lib/jquery/jquery.min.js",
   BASE + "lib/jquery-ui/ui/minified/jquery-ui.min.js",
+  BASE + "lib/velocity/velocity.min.js",
 
+  // 🔹 createjs 계열
   BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
   BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
   BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
+  BASE + "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js", // optional
 
-  BASE + "lib/velocity/velocity.min.js",
-
+  // 🔹 CodeMirror core
   BASE + "lib/codemirror/codemirror.js",
   BASE + "lib/codemirror/vim.js",
 
-  // ✅ React 먼저
+  // 🔹 CodeMirror addon (텍스트/파이썬/힌트/린트 UI에 필요)
+  BASE + "lib/codemirror/addon/hint/show-hint.js",
+  BASE + "lib/codemirror/addon/lint/lint.js",
+  BASE + "lib/codemirror/addon/selection/active-line.js",
+  BASE + "lib/codemirror/mode/javascript/javascript.js",
+  BASE + "lib/codemirror/addon/hint/javascript-hint.js",
+
+  // 🔹 기타 의존 라이브러리
+  BASE + "js/jshint.js",
+  BASE + "lib/fuzzy/lib/fuzzy.js",
+  BASE + "js/ws/python.js",
+
+  // 🔹 React (entry-lms UI에 필수)
   BASE + "lib/react/umd/react.production.min.js",
   BASE + "lib/react-dom/umd/react-dom.production.min.js",
 
-  // ✅ LMS UI shell
+  // 🔹 socket.io (entry-tool 내부에서 참조됨)
+  BASE + "lib/socket.io-client/socket.io.js",
+
+  // 🔹 LMS UI shell (모달/오브젝트/테이블 패널)
   BASE + "lib/entry-lms/dist/assets/app.js",
 
-  // ✅ tool은 LMS/React 뒤
+  // 🔹 Entry Tool (버튼/상단 UI)
   BASE + "lib/entry-tool/dist/entry-tool.js",
 
+  // 🔹 Entry util (example.ejs에서 사용하던 것들)
   BASE + "lib/entryjs/extern/lang/ko.js",
   BASE + "lib/entryjs/extern/util/static.js",
   BASE + "lib/entryjs/extern/util/handle.js",
   BASE + "lib/entryjs/extern/util/bignumber.min.js",
+  BASE + "lib/entryjs/extern/util/filbert.js",
+  BASE + "lib/entryjs/extern/util/CanvasInput.js",
+  BASE + "lib/entryjs/extern/util/ndgmr.Collision.js",
+
   BASE + "lib/module/legacy-video/index.js",
 
+  // 🔹 사운드 에디터 (optional)
   BASE + "lib/external/sound/sound-editor.js",
 
-  // ✅ Entry 본체
+  // 🔹 Entry 엔진 본체
   BASE + "lib/entryjs/dist/entry.min.js",
 
-  // ✅ paint
+  // 🔹 Paint
   BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
 ];
 
