@@ -135,53 +135,46 @@ const cssList = [
 
       // core libs
 const jsList = [
-
-  // 🔹 기본 유틸
+  // 1) 기본 유틸
   BASE + "lib/lodash/dist/lodash.min.js",
   BASE + "lib/jquery/jquery.min.js",
   BASE + "lib/jquery-ui/ui/minified/jquery-ui.min.js",
   BASE + "lib/velocity/velocity.min.js",
 
-  // 🔹 createjs 계열
+  // 2) createjs
   BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
   BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
   BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
   BASE + "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js", // optional
 
-  // 🔹 CodeMirror core
+  // 3) CodeMirror core + addons (있으면)
   BASE + "lib/codemirror/codemirror.js",
-  BASE + "lib/codemirror/vim.js",
-
-  // 🔹 CodeMirror addon
+  BASE + "lib/codemirror/vim.js", // optional
   BASE + "lib/codemirror/addon/hint/show-hint.js",
   BASE + "lib/codemirror/addon/lint/lint.js",
   BASE + "lib/codemirror/addon/selection/active-line.js",
   BASE + "lib/codemirror/mode/javascript/javascript.js",
   BASE + "lib/codemirror/addon/hint/javascript-hint.js",
 
-  // 🔹 기타 의존
+  // 4) 기타 의존
   BASE + "js/jshint.js",
   BASE + "lib/fuzzy/lib/fuzzy.js",
   BASE + "js/ws/python.js",
 
-  // 🔹 React
+  // 5) React
   BASE + "lib/react/umd/react.production.min.js",
   BASE + "lib/react-dom/umd/react-dom.production.min.js",
 
-  // 🔹 socket.io
+  // 6) socket.io
   BASE + "lib/socket.io-client/socket.io.js",
 
-  // 🔹 LMS UI shell
-  BASE + "lib/entry-lms/dist/assets/app.js",
-
-  // ✅ Entry Tool이 renderer_build보다 먼저! (핵심)
+  // 7) ✅ EntryTool을 renderer_build보다 먼저!
   BASE + "lib/entry-tool/dist/entry-tool.js",
 
-  // ✅ renderer_build (EntryTool 이후)
-  BASE + "renderer_build/init.bundle.js",
-  BASE + "renderer_build/render.bundle.js",
+  // 8) entry-lms (포털/모달 Root 생성)
+  BASE + "lib/entry-lms/dist/assets/app.js",
 
-  // 🔹 Entry util
+  // 9) Entry util + engine
   BASE + "lib/entryjs/extern/lang/ko.js",
   BASE + "lib/entryjs/extern/util/static.js",
   BASE + "lib/entryjs/extern/util/handle.js",
@@ -189,17 +182,16 @@ const jsList = [
   BASE + "lib/entryjs/extern/util/filbert.js",
   BASE + "lib/entryjs/extern/util/CanvasInput.js",
   BASE + "lib/entryjs/extern/util/ndgmr.Collision.js",
-
   BASE + "lib/module/legacy-video/index.js",
 
-  // 🔹 사운드 에디터 (optional)
-  BASE + "lib/external/sound/sound-editor.js",
+  BASE + "lib/external/sound/sound-editor.js", // optional
 
-  // 🔹 Entry 엔진
   BASE + "lib/entryjs/dist/entry.min.js",
-
-  // 🔹 Paint
   BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
+
+  // 10) ✅ renderer_build는 제일 마지막(EntryTool/Entry 모두 준비된 후)
+  BASE + "renderer_build/init.bundle.js",
+  BASE + "renderer_build/render.bundle.js",
 ];
       for (const src of jsList) {
         const optional =
