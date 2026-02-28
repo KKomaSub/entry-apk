@@ -248,6 +248,7 @@ const jsList = [
         EntryStatic.mediaPath = BASE + "media/";
         EntryStatic.uploadPath = BASE + "uploads/";
       }
+      
 
       bootLine("HREF = " + location.href, "dim");
 window.PUBLIC_PATH_FOR_ENTRYJS = "lib/entryjs/dist/";
@@ -261,7 +262,35 @@ Entry.creationChangedEvent = new Entry.Event(window);
       });
 
       Entry.loadProject();
+ function patchAddButtons() {
+    try {
+      if (!window.Entry || !Entry.playground || !Entry.Command) return false;
 
+      const btn = Entry.playground._pictureAddButton;
+      if (!btn) return false;
+
+      const run = () => {
+        try { Entry.Command[702].do(); } catch (e) { console.error(e); }
+      };
+
+      // jQuery 객체일 수도, DOM일 수도 있어서 둘 다 처리
+      if (btn.on) {
+        btn.off("click.__force702");
+        btn.on("click.__force702", (e) => { e.preventDefault?.(); e.stopPropagation?.(); run(); });
+      } else if (btn.addEventListener) {
+        btn.addEventListener("click", (e) => { e.preventDefault?.(); e.stopPropagation?.(); run(); }, true);
+      }
+
+      return true;
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
+  }
+
+  // Entry 초기화 직후 약간 기다렸다가 패치
+    const ok = patchAddButtons();
+    if (window.bootLine) bootLine("PATCH pictureAddButton -> Command[702]: " + (ok ? "OK" : "MISS"), ok ? "ok" : "bad");
       bootLine("BOOT OK: init+loadProject called, hiding logs…", "dim");
       hideBootLater(1500);
     }
