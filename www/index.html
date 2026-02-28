@@ -262,6 +262,34 @@ Entry.creationChangedEvent = new Entry.Event(window);
       });
 
       Entry.loadProject();
+      // ✅ 오브젝트 추가 버튼/커맨드 디버그 (화면 안 뜨는 원인 1초컷)
+setTimeout(() => {
+  try {
+    const hasCmd = !!(window.Entry && Entry.Command && Entry.Command[702] && typeof Entry.Command[702].do === "function");
+    bootLine("CHECK Command[702].do = " + hasCmd, hasCmd ? "ok" : "bad");
+
+    const btn = Entry?.playground?._pictureAddButton;
+    bootLine("CHECK _pictureAddButton = " + (btn ? "OK" : "NO"), btn ? "ok" : "bad");
+
+    // ✅ 버튼 클릭을 강제로 가로채서 예외 로그를 반드시 찍기
+    if (btn && btn.on) {
+      btn.off?.("click.__force702");
+      btn.on("click.__force702", (e) => {
+        e?.preventDefault?.();
+        e?.stopPropagation?.();
+        bootLine("CLICK pictureAddButton -> try Command[702].do()", "dim");
+        try {
+          Entry.Command[702].do();
+          bootLine("Command[702].do() called", "ok");
+        } catch (err) {
+          bootLine("Command[702] threw: " + (err?.stack || err), "bad");
+        }
+      });
+    }
+  } catch (e) {
+    bootLine("DEBUG install failed: " + (e?.stack || e), "bad");
+  }
+}, 800);
  function patchAddButtons() {
     try {
       if (!window.Entry || !Entry.playground || !Entry.Command) return false;
@@ -306,6 +334,10 @@ Entry.creationChangedEvent = new Entry.Event(window);
 
 <body>
   <div id="entryContainer"></div>
+  <div id="entry-lms-root"></div>
+<div id="modal-root"></div>
+<div id="portal-root"></div>
+<div id="toast-root"></div>
   <div id="boot">Entry Offline Editor
 Made by KKomaProgrammer
 Loading…</div>
