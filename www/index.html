@@ -262,6 +262,107 @@ Entry.creationChangedEvent = new Entry.Event(window);
       });
 
       Entry.loadProject();
+      function forceShowModalLike() {
+  const nodes = Array.from(document.querySelectorAll(
+    '[class*="modal"],[class*="popup"],[class*="dialog"],[class*="layer"],' +
+    '[id*="modal"],[id*="popup"],[id*="dialog"]'
+  ));
+
+  bootLine("FORCE VISIBILITY: nodes=" + nodes.length, nodes.length ? "ok" : "bad");
+
+  nodes.forEach((el) => {
+    try {
+      // 1) 자기 자신 강제 표시
+      el.style.display = "block";
+      el.style.visibility = "visible";
+      el.style.opacity = "1";
+      el.style.pointerEvents = "auto";
+      el.style.zIndex = "2147483647";
+
+      // 2) 조상 중 display:none 있으면 전부 block으로 풀기
+      let p = el.parentElement;
+      let depth = 0;
+      while (p && depth++ < 12) {
+        const cs = getComputedStyle(p);
+        if (cs.display === "none") {
+          p.style.display = "block";
+          p.style.visibility = "visible";
+          p.style.opacity = "1";
+        }
+        p.style.zIndex = "2147483647";
+        p = p.parentElement;
+      }
+    } catch (_) {}
+  });
+}
+
+// ✅ 버튼 클릭 + Command[702] 둘 다 시도하고, 직후 강제 표시
+function openObjectAdd() {
+  bootLine("TRY open object add", "dim");
+
+  try {
+    const btn = Entry?.playground?._pictureAddButton;
+    bootLine("BTN exists=" + !!btn + " disabled=" + (btn?.disabled ?? "N/A"), btn ? "ok" : "bad");
+    if (btn) {
+      btn.click();
+      btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      bootLine("CLICKED _pictureAddButton", "dim");
+    }
+  } catch (e) {
+    bootLine("BTN click error: " + String(e?.stack || e), "bad");
+  }
+
+  try {
+    Entry?.Command?.[702]?.do?.();
+    bootLine("CALLED Command[702].do()", "dim");
+  } catch (e) {
+    bootLine("CMD702 error: " + String(e?.stack || e), "bad");
+  }
+
+  // 모달 생성/상태 반영 텀 기다렸다가 강제 표시
+  setTimeout(forceShowModalLike, 120);
+  setTimeout(forceShowModalLike, 400);
+}
+function closeObjectAdd() {
+  bootLine("TRY close object add", "dim");
+
+  try {
+    if (Entry?.modal?.hide) {
+      Entry.modal.hide();
+      bootLine("CLOSED via Entry.modal.hide()", "ok");
+      return;
+    }
+  } catch (e) {
+    bootLine("modal.hide error: " + String(e?.stack || e), "bad");
+  }
+
+  try {
+    if (Entry?.Command?.[703]?.do) {
+      Entry.Command[703].do();
+      bootLine("CLOSED via Command[703].do()", "ok");
+      return;
+    }
+  } catch (e) {
+    bootLine("Command[703] error: " + String(e?.stack || e), "bad");
+  }
+
+  // 🔧 최후 수단: modal-like DOM 직접 제거
+  const nodes = document.querySelectorAll(
+    '[class*="modal"],[class*="popup"],[class*="dialog"],[class*="layer"]'
+  );
+  nodes.forEach((el) => {
+    el.style.display = "none";
+  });
+  bootLine("CLOSED via DOM fallback", "dim");
+}
+// ✅ 1회 자동 테스트
+setTimeout(() => {
+  openObjectAdd();
+
+  // 1초 후 닫기
+  setTimeout(closeObjectAdd, 5000);
+
+}, 900);
       // ✅ 오브젝트 추가 버튼/커맨드 디버그 (화면 안 뜨는 원인 1초컷)
 setTimeout(() => {
   try {
