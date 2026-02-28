@@ -184,6 +184,42 @@ jobs:
           ls -la "www/lib/@entrylabs/entry./images/hw" || true
           ls -la "www/lib/@entrylabs/entry/images/hw" || true
 
+      # =========================
+      # ✅✅✅ 여기부터가 “방금 말한 추가만” (기존 내용 변경 없음)
+      # =========================
+
+      - name: Ensure entry-tool exists (required for object add modal)
+        run: |
+          set -Eeuo pipefail
+          if [ ! -f "www/lib/entry-tool/dist/entry-tool.js" ]; then
+            echo "MISSING: www/lib/entry-tool/dist/entry-tool.js -> downloading"
+            mkdir -p "www/lib/entry-tool/dist"
+            curl -L --fail "https://playentry.org/lib/entry-tool/dist/entry-tool.js" -o "www/lib/entry-tool/dist/entry-tool.js"
+          fi
+          if [ ! -f "www/lib/entry-tool/dist/entry-tool.css" ]; then
+            echo "MISSING: entry-tool.css -> downloading"
+            mkdir -p "www/lib/entry-tool/dist"
+            curl -L --fail "https://playentry.org/lib/entry-tool/dist/entry-tool.css" -o "www/lib/entry-tool/dist/entry-tool.css"
+          fi
+          echo "== entry-tool check =="
+          ls -la "www/lib/entry-tool/dist" || true
+          grep -RIn "EntryTool" "www/lib/entry-tool/dist/entry-tool.js" | head -n 10 || true
+
+      - name: Ensure entry-lms css/js exists (modal roots)
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "www/lib/entry-lms/dist/assets"
+          if [ ! -f "www/lib/entry-lms/dist/assets/app.js" ]; then
+            echo "MISSING: entry-lms app.js -> downloading"
+            curl -L --fail "https://playentry.org/lib/entry-lms/dist/assets/app.js" -o "www/lib/entry-lms/dist/assets/app.js"
+          fi
+          if [ ! -f "www/lib/entry-lms/dist/assets/app.css" ]; then
+            echo "MISSING: entry-lms app.css -> downloading"
+            curl -L --fail "https://playentry.org/lib/entry-lms/dist/assets/app.css" -o "www/lib/entry-lms/dist/assets/app.css"
+          fi
+          echo "== entry-lms assets =="
+          ls -la "www/lib/entry-lms/dist/assets" || true
+
       # ✅✅ (추가) /images/hw/... 같은 “루트 images” 참조를 흡수하기 위해 entryjs/images를 www/images로 미러링
       - name: Mirror entryjs images to root www/images (fix /images/hw/* broken)
         run: |
