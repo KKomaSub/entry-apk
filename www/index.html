@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Entry Offline Editor</title>
-
+<script src="./local_backend.js"></script>
   <link rel="stylesheet" href="overrides.css">
 
   <style>
@@ -274,6 +274,8 @@ BASE + "local_backend.js",
       // renderer_build 내부에서 이미 Entry.init을 수행하고 UI(모달/패널)까지 구성함
 
       bootLine("BOOT OK: renderer_build loaded (Entry.init is inside render.bundle.js)", "ok");
+      bootLine("EARLY CHECK ipcRenderer=" + (typeof window.ipcRenderer), window.ipcRenderer ? "ok" : "bad");
+bootLine("EARLY CHECK require=" + (typeof window.require), window.require ? "ok" : "bad");
       // renderer_build까지 로드한 직후에 추가
 setTimeout(() => {
   const root = document.getElementById("root");
