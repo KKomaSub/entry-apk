@@ -35,7 +35,20 @@
     window.__bootLine = bootLineImpl;
     window.__bootline = bootLineImpl;
   </script>
-
+<script>
+  // ✅ entry-offline renderer가 기대하는 전역 훅 (없으면 바로 크래시)
+  if (typeof window.onPageLoaded !== "function") {
+    window.onPageLoaded = function () {
+      // renderer가 부팅 완료 시점에 호출하려는 훅
+      if (window.bootLine) bootLine("HOOK onPageLoaded()", "dim");
+    };
+  }
+  if (typeof window.onPageUnloaded !== "function") {
+    window.onPageUnloaded = function () {
+      if (window.bootLine) bootLine("HOOK onPageUnloaded()", "dim");
+    };
+  }
+</script>
   <!-- drawImage guard (broken png/svg 로 인해 렌더 루프 죽는 것 방지) -->
   <script>
     if (!window.__DRAWIMAGE_GUARD__) {
@@ -361,17 +374,19 @@ document.addEventListener("DOMContentLoaded", () => {
 </head>
 
 <body>
-  <div id="entryContainer"></div>
-
-  <div id="boot">Entry Offline Editor
-Made by KKomaProgrammer
-Loading…</div>
-
-  <!-- ✅ entry-lms root들 (render.bundle가 찾는 경우가 있어 미리 만들어 둠) -->
+  <!-- ✅ renderer_build(Entry Offline UI)가 붙는 루트들 -->
   <div id="root"></div>
   <div id="entry-lms-root"></div>
   <div id="modal-root"></div>
   <div id="portal-root"></div>
   <div id="toast-root"></div>
+
+  <!-- 기존 Entry 작업영역 -->
+  <div id="entryContainer"></div>
+
+  <!-- 부트 로그 -->
+  <div id="boot">Entry Offline Editor
+Made by KKomaProgrammer
+Loading…</div>
 </body>
 </html>
