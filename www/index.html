@@ -226,7 +226,7 @@
         BASE + "lib/external/sound/sound-editor.js", // optional
         BASE + "lib/entryjs/dist/entry.min.js",
         BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
-
+BASE + "local_backend.js",
         // renderer_build (★ 맨 마지막 ★)
         BASE + "renderer_build/init.bundle.js",
         BASE + "renderer_build/render.bundle.js",
@@ -274,7 +274,28 @@
       // renderer_build 내부에서 이미 Entry.init을 수행하고 UI(모달/패널)까지 구성함
 
       bootLine("BOOT OK: renderer_build loaded (Entry.init is inside render.bundle.js)", "ok");
-      hideBootLater(1200);
+      // renderer_build까지 로드한 직후에 추가
+setTimeout(() => {
+  const root = document.getElementById("root");
+  const lms = document.getElementById("entry-lms-root");
+  const modal = document.getElementById("modal-root");
+
+  bootLine("POSTCHECK root.children=" + (root ? root.children.length : "null"), root && root.children.length ? "ok" : "bad");
+  bootLine("POSTCHECK lms.children=" + (lms ? lms.children.length : "null"), lms && lms.children.length ? "ok" : "dim");
+  bootLine("POSTCHECK modal.children=" + (modal ? modal.children.length : "null"), modal && modal.children.length ? "ok" : "dim");
+
+  bootLine("POSTCHECK ipcRenderer=" + (typeof window.ipcRenderer), window.ipcRenderer ? "ok" : "bad");
+  bootLine("POSTCHECK require(electron)=" + (window.require && window.require("electron") ? "ok" : "bad"), "dim");
+
+  // ✅ 실제 UI가 붙었을 때만 로그 제거
+  if (root && root.children.length > 0) {
+    bootLine("UI mounted -> hide boot", "ok");
+    hideBootLater(800);
+  } else {
+    bootLine("UI not mounted (white screen). Keep boot for logs.", "bad");
+  }
+}, 2000);
+      
     }
 
     window.onerror = function(m, s, l, c, e) {
@@ -299,6 +320,7 @@ Made by KKomaProgrammer
 Loading…</div>
 
   <!-- ✅ entry-lms root들 (render.bundle가 찾는 경우가 있어 미리 만들어 둠) -->
+  <div id="root"></div>
   <div id="entry-lms-root"></div>
   <div id="modal-root"></div>
   <div id="portal-root"></div>
