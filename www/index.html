@@ -112,35 +112,7 @@
         if (await probeBase(c)) { BASE = c; break; }
       }
       bootLine("BASE = " + BASE, "ok");
-      f (!window.process) window.process = {};
-if (!window.process.env) window.process.env = {};
-if (!window.process.env.NODE_ENV) window.process.env.NODE_ENV = "production";
 
-if (!window.electron) {
-  window.electron = {
-    ipcRenderer: {
-      invoke: async function(){ return null; },
-      send: function(){},
-      on: function(){},
-      once: function(){},
-      removeAllListeners: function(){}
-    },
-    shell: { openExternal: function(){} },
-    clipboard: {
-      readText: function(){ return ""; },
-      writeText: function(){}
-    }
-  };
-}
-
-if (!window.require) {
-  window.require = function(name){
-    if (name === "electron") return window.electron;
-    return {};
-  };
-}
-
-console.log("Electron stub installed (no IIFE)");
       if (window.LocalBackend) LocalBackend.install(BASE);
       // CSS
 const cssList = [
