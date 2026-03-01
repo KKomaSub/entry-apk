@@ -226,58 +226,61 @@ function patchReactDomRenderProbe() {
       // ✅ JS 로드 순서 (중요!)
       // - EntryTool은 renderer_build보다 반드시 먼저
       // - renderer_build는 맨 마지막 (안에 Entry.init이 이미 있음)
-      const jsList = [
-        // base
-        BASE + "lib/lodash/dist/lodash.min.js",
-        BASE + "lib/jquery/jquery.min.js",
-        BASE + "lib/jquery-ui/ui/minified/jquery-ui.min.js",
-        BASE + "lib/velocity/velocity.min.js",
+const jsList = [
+  // 기본
+  BASE + "lib/lodash/dist/lodash.min.js",
+  BASE + "lib/jquery/jquery.min.js",
+  BASE + "lib/jquery-ui/ui/minified/jquery-ui.min.js",
+  BASE + "lib/velocity/velocity.min.js",
 
-        // createjs
-        BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
-        BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
-        BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
-        BASE + "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js", // optional
+  // createjs
+  BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
+  BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
+  BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
+  BASE + "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js", // optional
 
-        // codemirror core + addons
-        BASE + "lib/codemirror/codemirror.js",
-        BASE + "lib/codemirror/vim.js",
-        BASE + "lib/codemirror/addon/hint/show-hint.js",
-        BASE + "lib/codemirror/addon/lint/lint.js",
-        BASE + "lib/codemirror/addon/selection/active-line.js",
-        BASE + "lib/codemirror/mode/javascript/javascript.js",
-        BASE + "lib/codemirror/addon/hint/javascript-hint.js",
+  // CodeMirror
+  BASE + "lib/codemirror/codemirror.js",
+  BASE + "lib/codemirror/vim.js",
+  BASE + "lib/codemirror/addon/hint/show-hint.js",
+  BASE + "lib/codemirror/addon/lint/lint.js",
+  BASE + "lib/codemirror/addon/selection/active-line.js",
+  BASE + "lib/codemirror/mode/javascript/javascript.js",
+  BASE + "lib/codemirror/addon/hint/javascript-hint.js",
 
-        // extras
-        BASE + "js/jshint.js",
-        BASE + "lib/fuzzy/lib/fuzzy.js",
-        BASE + "js/ws/python.js",
+  // 기타
+  BASE + "js/jshint.js",
+  BASE + "lib/fuzzy/lib/fuzzy.js",
+  BASE + "js/ws/python.js",
 
-        // react + lms
-        BASE + "lib/react/umd/react.production.min.js",
-        BASE + "lib/react-dom/umd/react-dom.production.min.js",
-        BASE + "lib/entry-lms/dist/assets/app.js",
+  // React 먼저
+  BASE + "lib/react/umd/react.production.min.js",
+  BASE + "lib/react-dom/umd/react-dom.production.min.js",
 
-        // socket.io
-        BASE + "lib/socket.io-client/socket.io.js",
+  // entry-lms UI shell 먼저(모달/포털/토스트 루트 사용)
+  BASE + "lib/entry-lms/dist/assets/app.js",
 
-        // EntryTool (★ renderer_build 이전 필수 ★)
-        BASE + "lib/entry-tool/dist/entry-tool.js",
+  // ✅✅ renderer_build는 반드시 init → render 순서
+  BASE + "renderer_build/init.bundle.js",
+  BASE + "renderer_build/render.bundle.js",
 
-        // Entry engine + deps
-        BASE + "lib/entryjs/extern/lang/ko.js",
-        BASE + "lib/entryjs/extern/util/static.js",
-        BASE + "lib/entryjs/extern/util/handle.js",
-        BASE + "lib/entryjs/extern/util/bignumber.min.js",
-        BASE + "lib/module/legacy-video/index.js",
-        BASE + "lib/external/sound/sound-editor.js", // optional
-        BASE + "lib/entryjs/dist/entry.min.js",
-        BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
-BASE + "local_backend.js",
-        // renderer_build (★ 맨 마지막 ★)
-        BASE + "renderer_build/init.bundle.js",
-        BASE + "renderer_build/render.bundle.js",
-      ];
+  // entry-tool (renderer_build 안에서 EntryTool 참조하는 케이스 대비)
+  BASE + "lib/entry-tool/dist/entry-tool.js",
+
+  // Entry 엔진 본체는 (네가 쓰는 방식이면) 여기
+  BASE + "lib/entryjs/extern/lang/ko.js",
+  BASE + "lib/entryjs/extern/util/static.js",
+  BASE + "lib/entryjs/extern/util/handle.js",
+  BASE + "lib/entryjs/extern/util/bignumber.min.js",
+  BASE + "lib/entryjs/extern/util/filbert.js",
+  BASE + "lib/entryjs/extern/util/CanvasInput.js",
+  BASE + "lib/entryjs/extern/util/ndgmr.Collision.js",
+  BASE + "lib/module/legacy-video/index.js",
+
+  BASE + "lib/external/sound/sound-editor.js", // optional
+  BASE + "lib/entryjs/dist/entry.min.js",
+  BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
+];
 
       for (const src of jsList) {
         const optional =
@@ -312,6 +315,11 @@ BASE + "local_backend.js",
           throw new Error("Required JS missing: " + src);
         }
       }
+      // jsList 로딩 끝난 직후에 1번만
+if (window.__PAGE_LOADED_FIRED__ && typeof window.onPageLoaded === "function") {
+  bootLine("RECALL onPageLoaded after bundles", "dim");
+  window.onPageLoaded();
+}
       patchReactDomRenderProbe();
 
       // ✅ renderer_build가 죽는지 빠르게 확인 (EntryTool undefined 방지용)
