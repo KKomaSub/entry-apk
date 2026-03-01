@@ -271,15 +271,16 @@ const jsList = [
   BASE + "lib/entryjs/extern/util/CanvasInput.js",
   BASE + "lib/entryjs/extern/util/ndgmr.Collision.js",
   BASE + "lib/module/legacy-video/index.js",
-  // ✅✅ renderer_build는 반드시 init → render 순서
-  BASE + "renderer_build/init.bundle.js",
-  BASE + "renderer_build/render.bundle.js",
+
 
   // entry-tool (renderer_build 안에서 EntryTool 참조하는 케이스 대비)
   BASE + "lib/entry-tool/dist/entry-tool.js",
   BASE + "lib/external/sound/sound-editor.js", // optional
   BASE + "lib/entryjs/dist/entry.min.js",
   BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
+  // ✅✅ renderer_build는 반드시 init → render 순서
+  BASE + "renderer_build/init.bundle.js",
+  BASE + "renderer_build/render.bundle.js",
 ];
 
       for (const src of jsList) {
