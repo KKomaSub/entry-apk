@@ -6,7 +6,7 @@
   <title>Entry Offline Editor</title>
 
   <link rel="stylesheet" href="overrides.css">
-  <script src="local_backend.js"></script>
+
   <style>
     html,body{margin:0;height:100%;overflow:hidden;background:#111}
     #entryContainer{width:100%;height:100%;background:#f5f5f5}
@@ -19,19 +19,8 @@
     .dim{opacity:.85}
     .ok{color:#66ff66}
   </style>
-<style>
-  /* ✅ 모달/포탈이 entryContainer 위로 뜨게 보장 */
-  #entry-lms-root, #portal-root, #modal-root, #toast-root{
-    position: fixed;
-    inset: 0;
-    z-index: 2147483647; /* 최상단 */
-    pointer-events: none; /* 루트 자체는 클릭 방해 X */
-  }
-  /* 모달 내용물은 클릭 가능해야 하므로 */
-  #entry-lms-root *, #portal-root *, #modal-root *, #toast-root *{
-    pointer-events: auto;
-  }
-</style>
+
+  <!-- boot logger (전역 고정) -->
   <script>
     function bootLineImpl(t, cls="") {
       const el = document.getElementById("boot");
@@ -42,36 +31,45 @@
       el.appendChild(d);
       el.scrollTop = el.scrollHeight;
     }
-    // 전역 함수
     window.bootLine = bootLineImpl;
     window.__bootLine = bootLineImpl;
     window.__bootline = bootLineImpl;
+  </script>
 
-    const bootLine = (...args) => window.bootLine(...args);
-
-    // broken 이미지 drawImage 예외 삼키기(이건 경로패치가 아니라 “렌더 루프 보호”라 유지)
+  <!-- drawImage guard (broken png/svg 로 인해 렌더 루프 죽는 것 방지) -->
+  <script>
     if (!window.__DRAWIMAGE_GUARD__) {
       window.__DRAWIMAGE_GUARD__ = true;
-      const proto = CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
+      const proto = window.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
       if (proto && proto.drawImage) {
         const _drawImage = proto.drawImage;
         proto.drawImage = function(img, ...rest) {
           try {
             if (img && img.tagName === "IMG") {
               const nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
-              if (nw === 0 || nh === 0) return;
+              if (nw === 0 || nh === 0) return; // broken이면 스킵
             }
             return _drawImage.call(this, img, ...rest);
-          } catch (_) { return; }
+          } catch (_) {
+            return; // 무조건 삼킴
+          }
         };
       }
     }
+  </script>
 
-    window.onerror = function (m, s, l, c, e) {
-      bootLine("JS ERROR:", "bad");
-      bootLine(String(e && e.stack ? e.stack : m), "bad");
-    };
+  <script>
+    // 기존 호출 호환용 alias
+    const bootLine = (...args) => window.bootLine(...args);
 
+    function hideBootLater(delayMs = 1200) {
+      setTimeout(() => {
+        const el = document.getElementById("boot");
+        if (el) el.remove();
+      }, delayMs);
+    }
+
+    // ✅ BASE 자동 탐지 (./, /, /public/, /www/ 중 1개)
     async function probeBase(prefix) {
       const url = prefix + "lib/lodash/dist/lodash.min.js";
       try {
@@ -81,32 +79,59 @@
         return false;
       }
     }
-// ✅ entry-lms root가 비어있으면(=mount 실패) body 끝으로 다시 붙이고 한번 더 이벤트 트리거
-function ensureLmsRootsVisible() {
-  var ids = ["entry-lms-root","portal-root","modal-root","toast-root"];
-  for (var i=0;i<ids.length;i++){
-    var id = ids[i];
-    var el = document.getElementById(id);
-    if (!el) {
-      el = document.createElement("div");
-      el.id = id;
-      document.body.appendChild(el);
-    } else if (el.parentNode !== document.body) {
-      document.body.appendChild(el);
+
+    // ✅ /images/... 절대경로를 ./images/... 로 강제 + entry./ 오타 흡수
+    function installPathFixers() {
+      if (window.__PATH_FIXERS_INSTALLED__) return;
+      window.__PATH_FIXERS_INSTALLED__ = true;
+
+      const fix = (u) => {
+        if (typeof u !== "string") return u;
+
+        // ✅ entry./ 오타 경로 교정 (중요: click.mp3 같은 것)
+        u = u.replace("/lib/@entrylabs/entry./", "/lib/@entrylabs/entry/");
+        u = u.replace("lib/@entrylabs/entry./", "lib/@entrylabs/entry/");
+
+        // ✅ /images/... -> ./images/...
+        if (u.startsWith("/images/")) return "./images/" + u.slice("/images/".length);
+
+        return u;
+      };
+
+      // Image.src
+      const d = Object.getOwnPropertyDescriptor(Image.prototype, "src");
+      if (d && d.set) {
+        Object.defineProperty(Image.prototype, "src", {
+          get: d.get,
+          set(v) { return d.set.call(this, fix(v)); }
+        });
+      }
+
+      // XHR.open
+      const _open = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+        return _open.call(this, method, fix(url), ...rest);
+      };
+
+      // fetch
+      if (window.fetch) {
+        const _fetch = window.fetch.bind(window);
+        window.fetch = (input, init) => {
+          if (typeof input === "string") return _fetch(fix(input), init);
+          if (input && typeof input.url === "string") return _fetch(new Request(fix(input.url), input), init);
+          return _fetch(input, init);
+        };
+      }
+
+      bootLine("PATCH: /images -> ./images + fix entry./ path", "dim");
     }
-  }
 
-  var root = document.getElementById("entry-lms-root");
-  bootLine("ROOT entry-lms-root children=" + (root ? root.children.length : -1), "dim");
-
-  // mount 실패 케이스에서 app.js가 DOMContentLoaded 시점만 보고 끝나는 경우가 있어서, 이벤트 한번 더 줌
-  window.dispatchEvent(new Event("DOMContentLoaded"));
-  window.dispatchEvent(new Event("load"));
-}
     function loadJS(src) {
       return new Promise((resolve) => {
         const s = document.createElement("script");
         s.src = src;
+        s.defer = false;
+        s.async = false; // ✅ 순서 보장
         s.onload = () => resolve({ ok: true, src });
         s.onerror = () => resolve({ ok: false, src });
         document.head.appendChild(s);
@@ -124,20 +149,9 @@ function ensureLmsRootsVisible() {
       });
     }
 
-    function hideBootLater(delayMs = 1500) {
-      setTimeout(() => {
-        const el = document.getElementById("boot");
-        if (el) el.remove();
-      }, delayMs);
-    }
-
-    function must(cond, msg){
-      if(!cond) throw new Error(msg);
-      bootLine("OK   " + msg, "ok");
-    }
-
     async function boot() {
-      // BASE 자동 탐지(유지)
+      installPathFixers();
+
       const candidates = ["./", "/", "/public/", "/www/"];
       let BASE = "./";
       for (const c of candidates) {
@@ -146,92 +160,82 @@ function ensureLmsRootsVisible() {
       }
       bootLine("BASE = " + BASE, "ok");
 
-      if (window.LocalBackend) LocalBackend.install(BASE);
-      // CSS
-const cssList = [
-  BASE + "lib/entry-lms/dist/assets/app.css",
-  BASE + "lib/entry-tool/dist/entry-tool.css",
-  BASE + "lib/entryjs/dist/entry.css",
-  BASE + "lib/codemirror/codemirror.css",
-  BASE + "overrides.css",
-];
+      // ✅ CSS (LMS 먼저 포함)
+      const cssList = [
+        BASE + "lib/entry-lms/dist/assets/app.css",
+        BASE + "lib/entry-tool/dist/entry-tool.css",
+        BASE + "lib/entryjs/dist/entry.css",
+        BASE + "lib/codemirror/codemirror.css",
+        BASE + "lib/codemirror/addon/hint/show-hint.css",
+        BASE + "lib/codemirror/addon/lint/lint.css",
+        BASE + "overrides.css",
+      ];
+
       for (const href of cssList) {
         const r = await loadCSS(href);
         bootLine((r.ok ? "OK   CSS  " : "MISS CSS ") + href, r.ok ? "ok" : "bad");
       }
 
-      // locales (optional)
-      {
-        const src = BASE + "js/ws/locales.js";
-        const r = await loadJS(src);
-        bootLine((r.ok ? "OK   JS   " : "MISS(opt) ") + src, r.ok ? "ok" : "dim");
-      }
+      // ✅ JS 로드 순서 (중요!)
+      // - EntryTool은 renderer_build보다 반드시 먼저
+      // - renderer_build는 맨 마지막 (안에 Entry.init이 이미 있음)
+      const jsList = [
+        // base
+        BASE + "lib/lodash/dist/lodash.min.js",
+        BASE + "lib/jquery/jquery.min.js",
+        BASE + "lib/jquery-ui/ui/minified/jquery-ui.min.js",
+        BASE + "lib/velocity/velocity.min.js",
 
-      // core libs
-const jsList = [
-  // 1) 기본 유틸
-  BASE + "lib/lodash/dist/lodash.min.js",
-  BASE + "lib/jquery/jquery.min.js",
-  BASE + "lib/jquery-ui/ui/minified/jquery-ui.min.js",
-  BASE + "lib/velocity/velocity.min.js",
+        // createjs
+        BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
+        BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
+        BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
+        BASE + "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js", // optional
 
-  // 2) createjs
-  BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
-  BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
-  BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
-  BASE + "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js", // optional
+        // codemirror core + addons
+        BASE + "lib/codemirror/codemirror.js",
+        BASE + "lib/codemirror/vim.js",
+        BASE + "lib/codemirror/addon/hint/show-hint.js",
+        BASE + "lib/codemirror/addon/lint/lint.js",
+        BASE + "lib/codemirror/addon/selection/active-line.js",
+        BASE + "lib/codemirror/mode/javascript/javascript.js",
+        BASE + "lib/codemirror/addon/hint/javascript-hint.js",
 
-  // 3) CodeMirror core + addons (있으면)
-  BASE + "lib/codemirror/codemirror.js",
-  BASE + "lib/codemirror/vim.js", // optional
-  BASE + "lib/codemirror/addon/hint/show-hint.js",
-  BASE + "lib/codemirror/addon/lint/lint.js",
-  BASE + "lib/codemirror/addon/selection/active-line.js",
-  BASE + "lib/codemirror/mode/javascript/javascript.js",
-  BASE + "lib/codemirror/addon/hint/javascript-hint.js",
+        // extras
+        BASE + "js/jshint.js",
+        BASE + "lib/fuzzy/lib/fuzzy.js",
+        BASE + "js/ws/python.js",
 
-  // 4) 기타 의존
-  BASE + "js/jshint.js",
-  BASE + "lib/fuzzy/lib/fuzzy.js",
-  BASE + "js/ws/python.js",
+        // react + lms
+        BASE + "lib/react/umd/react.production.min.js",
+        BASE + "lib/react-dom/umd/react-dom.production.min.js",
+        BASE + "lib/entry-lms/dist/assets/app.js",
 
-  // 5) React
-  BASE + "lib/react/umd/react.production.min.js",
-  BASE + "lib/react-dom/umd/react-dom.production.min.js",
+        // socket.io
+        BASE + "lib/socket.io-client/socket.io.js",
 
-  // 6) socket.io
-  BASE + "lib/socket.io-client/socket.io.js",
+        // EntryTool (★ renderer_build 이전 필수 ★)
+        BASE + "lib/entry-tool/dist/entry-tool.js",
 
-  // 7) ✅ EntryTool을 renderer_build보다 먼저!
-  BASE + "lib/entry-tool/dist/entry-tool.js",
+        // Entry engine + deps
+        BASE + "lib/entryjs/extern/lang/ko.js",
+        BASE + "lib/entryjs/extern/util/static.js",
+        BASE + "lib/entryjs/extern/util/handle.js",
+        BASE + "lib/entryjs/extern/util/bignumber.min.js",
+        BASE + "lib/module/legacy-video/index.js",
+        BASE + "lib/external/sound/sound-editor.js", // optional
+        BASE + "lib/entryjs/dist/entry.min.js",
+        BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
 
-  // 8) entry-lms (포털/모달 Root 생성)
-  BASE + "lib/entry-lms/dist/assets/app.js",
+        // renderer_build (★ 맨 마지막 ★)
+        BASE + "renderer_build/init.bundle.js",
+        BASE + "renderer_build/render.bundle.js",
+      ];
 
-  // 9) Entry util + engine
-  BASE + "lib/entryjs/extern/lang/ko.js",
-  BASE + "lib/entryjs/extern/util/static.js",
-  BASE + "lib/entryjs/extern/util/handle.js",
-  BASE + "lib/entryjs/extern/util/bignumber.min.js",
-  BASE + "lib/entryjs/extern/util/filbert.js",
-  BASE + "lib/entryjs/extern/util/CanvasInput.js",
-  BASE + "lib/entryjs/extern/util/ndgmr.Collision.js",
-  BASE + "lib/module/legacy-video/index.js",
-
-  BASE + "lib/external/sound/sound-editor.js", // optional
-
-  BASE + "lib/entryjs/dist/entry.min.js",
-  BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
-
-  // 10) ✅ renderer_build는 제일 마지막(EntryTool/Entry 모두 준비된 후)
-  BASE + "renderer_build/init.bundle.js",
-  BASE + "renderer_build/render.bundle.js",
-];
       for (const src of jsList) {
         const optional =
           src.includes("flashaudioplugin") ||
           src.includes("/vim.js") ||
-          src.includes("/ws/locales.js") ||
           src.includes("/external/sound/sound-editor.js");
 
         const r = await loadJS(src);
@@ -239,13 +243,13 @@ const jsList = [
         // sound-editor.js 실패 시 스텁
         if (!r.ok && src.includes("/external/sound/sound-editor.js")) {
           bootLine("MISS(opt) " + src, "dim");
-          bootLine("PATCH EntrySoundEditor: stub applied (sound editor disabled)", "dim");
+          bootLine("PATCH EntrySoundEditor: stub applied", "dim");
           if (!window.EntrySoundEditor) {
             window.EntrySoundEditor = {
-              renderSoundEditor: function () {},
-              registExportFunction: function () {},
-              registImportFunction: function () {},
-              init: function () {},
+              renderSoundEditor: function(){},
+              registExportFunction: function(){},
+              registImportFunction: function(){},
+              init: function(){},
             };
           }
           continue;
@@ -255,341 +259,29 @@ const jsList = [
           (r.ok ? "OK   JS   " : (optional ? "MISS(opt) " : "MISS     ")) + src,
           r.ok ? "ok" : (optional ? "dim" : "bad")
         );
-      }
 
-      // lodash 패치(구버전 호환)
-      if (window._) {
-        if (typeof _.contains !== "function" && typeof _.includes === "function") _.contains = _.includes;
-        if (typeof _.findWhere !== "function") {
-          _.findWhere = function (arr, attrs) {
-            return _.find(arr, function (o) {
-              for (var k in attrs) if (o[k] !== attrs[k]) return false;
-              return true;
-            });
-          };
+        // 필수 실패 시 즉시 중단(원인 로그 확보)
+        if (!r.ok && !optional) {
+          throw new Error("Required JS missing: " + src);
         }
-        bootLine("PATCH lodash: _.contains/_.findWhere ok", "dim");
       }
 
-      // EntryStatic path (유지)
-      if (window.EntryStatic) {
-        EntryStatic.imagePath = BASE + "images/";
-        EntryStatic.mediaPath = BASE + "media/";
-        EntryStatic.uploadPath = BASE + "uploads/";
-      }
-      
+      // ✅ renderer_build가 죽는지 빠르게 확인 (EntryTool undefined 방지용)
+      bootLine("CHECK EntryTool=" + (typeof window.EntryTool), (typeof window.EntryTool !== "undefined") ? "ok" : "bad");
+      bootLine("CHECK Entry=" + (typeof window.Entry), (typeof window.Entry !== "undefined") ? "ok" : "bad");
 
-      bootLine("HREF = " + location.href, "dim");
-window.PUBLIC_PATH_FOR_ENTRYJS = "lib/entryjs/dist/";
-Entry.creationChangedEvent = new Entry.Event(window);
-      bootLine("Starting Entry.init …", "dim");
-setTimeout(ensureLmsRootsVisible, 500);
-      Entry.init(document.getElementById("entryContainer"), {
-        type: "workspace",
-        libDir: "./lib",
-        textCodingEnable: true
-      });
+      // ✅ 중요: 여기서 Entry.init / Entry.loadProject 절대 호출 금지
+      // renderer_build 내부에서 이미 Entry.init을 수행하고 UI(모달/패널)까지 구성함
 
-      Entry.loadProject();
-      function forceShowModalLike() {
-  const nodes = Array.from(document.querySelectorAll(
-    '[class*="modal"],[class*="popup"],[class*="dialog"],[class*="layer"],' +
-    '[id*="modal"],[id*="popup"],[id*="dialog"]'
-  ));
-function __recoverIfFrozen(reason) {
-  bootLine("RECOVER start: " + reason, "bad");
-
-  // 1) 흔한 백드롭/오버레이들 제거/무력화
-  const killers = document.querySelectorAll(
-    '.modal-backdrop,.backdrop,.dimmed,.overlay,.ReactModal__Overlay,[class*="backdrop"],[class*="dimmed"],[class*="overlay"]'
-  );
-  killers.forEach((el) => {
-    el.style.display = "none";
-    el.style.pointerEvents = "none";
-  });
-
-  // 2) body/html 잠금 해제
-  document.documentElement.style.pointerEvents = "auto";
-  document.body.style.pointerEvents = "auto";
-  document.body.style.overflow = "auto";
-
-  // 3) 혹시 남아있는 전체화면 div(pointer-events:all) 제거
-  const full = document.querySelectorAll('body *');
-  for (const el of full) {
-    const st = window.getComputedStyle(el);
-    if (
-      (st.position === "fixed" || st.position === "absolute") &&
-      st.zIndex !== "auto" &&
-      Number(st.zIndex) > 1000 &&
-      (st.pointerEvents === "auto" || st.pointerEvents === "all") &&
-      (st.backgroundColor !== "rgba(0, 0, 0, 0)" && st.backgroundColor !== "transparent")
-    ) {
-      // 너무 공격적이면 주석 처리 가능
-      el.style.pointerEvents = "none";
-    }
-  }
-
-  bootLine("RECOVER done", "ok");
-}
-
-// ✅ “열기 시도 후 300ms 내에 모달이 안 보이면 복구”
-function __watchModalOrRecover(tag, waitMs = 300) {
-  setTimeout(() => {
-    const modalLike = document.querySelectorAll(
-      '[role="dialog"],.ReactModal__Content,[class*="modal"],[class*="dialog"],[class*="popup"]'
-    );
-
-    // “보이는” 모달이 하나라도 있으면 OK
-    let visible = false;
-    modalLike.forEach((el) => {
-      const st = window.getComputedStyle(el);
-      if (st.display !== "none" && st.visibility !== "hidden" && Number(st.opacity || "1") > 0.01) {
-        visible = true;
-      }
-    });
-
-    if (!visible) {
-      __recoverIfFrozen("modal not visible after open (" + tag + ")");
-    }
-  }, waitMs);
-}
-  bootLine("FORCE VISIBILITY: nodes=" + nodes.length, nodes.length ? "ok" : "bad");
-
-  nodes.forEach((el) => {
-    try {
-      // 1) 자기 자신 강제 표시
-      el.style.display = "block";
-      el.style.visibility = "visible";
-      el.style.opacity = "1";
-      el.style.pointerEvents = "auto";
-      el.style.zIndex = "2147483647";
-
-      // 2) 조상 중 display:none 있으면 전부 block으로 풀기
-      let p = el.parentElement;
-      let depth = 0;
-      while (p && depth++ < 12) {
-        const cs = getComputedStyle(p);
-        if (cs.display === "none") {
-          p.style.display = "block";
-          p.style.visibility = "visible";
-          p.style.opacity = "1";
-        }
-        p.style.zIndex = "2147483647";
-        p = p.parentElement;
-      }
-    } catch (_) {}
-  });
-}
-
-// ✅ 버튼 클릭 + Command[702] 둘 다 시도하고, 직후 강제 표시
-function openObjectAdd() {
-  bootLine("TRY open object add", "dim");
-
-  try {
-    const btn = Entry?.playground?._pictureAddButton;
-    bootLine("BTN exists=" + !!btn + " disabled=" + (btn?.disabled ?? "N/A"), btn ? "ok" : "bad");
-    if (btn) {
-      btn.click();
-      btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-      bootLine("CLICKED _pictureAddButton", "dim");
-    }
-  } catch (e) {
-    bootLine("BTN click error: " + String(e?.stack || e), "bad");
-  }
-
-  try {
-    Entry?.Command?.[702]?.do?.();
-    bootLine("CALLED Command[702].do()", "dim");
-  } catch (e) {
-    bootLine("CMD702 error: " + String(e?.stack || e), "bad");
-  }
-
-  // 모달 생성/상태 반영 텀 기다렸다가 강제 표시
-  setTimeout(forceShowModalLike, 120);
-  setTimeout(forceShowModalLike, 400);
-}
-function closeObjectAdd() {
-  bootLine("TRY close object add", "dim");
-
-  try {
-    if (Entry?.modal?.hide) {
-      Entry.modal.hide();
-      bootLine("CLOSED via Entry.modal.hide()", "ok");
-      return;
-    }
-  } catch (e) {
-    bootLine("modal.hide error: " + String(e?.stack || e), "bad");
-  }
-
-  try {
-    if (Entry?.Command?.[703]?.do) {
-      Entry.Command[703].do();
-      bootLine("CLOSED via Command[703].do()", "ok");
-      return;
-    }
-  } catch (e) {
-    bootLine("Command[703] error: " + String(e?.stack || e), "bad");
-  }
-
-  // 🔧 최후 수단: modal-like DOM 직접 제거
-  const nodes = document.querySelectorAll(
-    '[class*="modal"],[class*="popup"],[class*="dialog"],[class*="layer"]'
-  );
-  nodes.forEach((el) => {
-    el.style.display = "none";
-  });
-  bootLine("CLOSED via DOM fallback", "dim");
-}
-// ✅ 1회 자동 테스트
-
-      // ✅ 오브젝트 추가 버튼/커맨드 디버그 (화면 안 뜨는 원인 1초컷)
-setTimeout(() => {
-  try {
-    const hasCmd = !!(window.Entry && Entry.Command && Entry.Command[702] && typeof Entry.Command[702].do === "function");
-    bootLine("CHECK Command[702].do = " + hasCmd, hasCmd ? "ok" : "bad");
-
-    const btn = Entry?.playground?._pictureAddButton;
-    bootLine("CHECK _pictureAddButton = " + (btn ? "OK" : "NO"), btn ? "ok" : "bad");
-
-    // ✅ 버튼 클릭을 강제로 가로채서 예외 로그를 반드시 찍기
-    if (btn && btn.on) {
-      btn.off?.("click.__force702");
-      btn.on("click.__force702", (e) => {
-        e?.preventDefault?.();
-        e?.stopPropagation?.();
-        bootLine("CLICK pictureAddButton -> try Command[702].do()", "dim");
-        try {
-          Entry.Command[702].do();
-          __watchModalOrRecover("Command702", 350);
-          bootLine("Command[702].do() called", "ok");
-        } catch (err) {
-          bootLine("Command[702] threw: " + (err?.stack || err), "bad");
-        }
-      });
-    }
-  } catch (e) {
-    bootLine("DEBUG install failed: " + (e?.stack || e), "bad");
-  }
-}, 800);
-      // ✅ Promise 에러는 window.onerror에 안 찍힐 수 있음 (필수)
-window.addEventListener("unhandledrejection", (ev) => {
-  bootLine("UNHANDLED REJECTION:", "bad");
-  bootLine(String(ev && (ev.reason?.stack || ev.reason) || ev), "bad");
-});
-
-// ✅ 모달이 DOM에 붙는지 감시 (안 뜨는 원인: 생성은 되는데 CSS로 숨겨짐)
-const __mo = new MutationObserver((muts) => {
-  for (const m of muts) {
-    for (const n of m.addedNodes) {
-      if (!(n instanceof HTMLElement)) continue;
-      const s = (n.className || "") + " " + (n.id || "");
-      if (/modal|popup|dialog|layer|lms|portal/i.test(s) || n.querySelector?.('[class*="modal"],[class*="popup"],[class*="dialog"]')) {
-        bootLine("DOM ADD: " + (n.tagName + "#" + (n.id||"") + "." + (n.className||"")).slice(0, 120), "dim");
-      }
-    }
-  }
-});
-__mo.observe(document.documentElement, { childList: true, subtree: true });
-
-// ✅ 모달/포털이 “있는데 안 보이는” 경우를 위해 강제 가시화 CSS 주입
-const __style = document.createElement("style");
-__style.textContent = `
-  #entry-lms-root, #modal-root, #portal-root, #toast-root { position: fixed; inset: 0; z-index: 2147483647; pointer-events: none; }
-  #entry-lms-root *, #modal-root *, #portal-root *, #toast-root * { pointer-events: auto; }
-  [class*="modal"],[class*="popup"],[class*="dialog"],[class*="layer"] { z-index: 2147483647 !important; }
-`;
-document.head.appendChild(__style);
-
-// ✅ Command[702].do() 래핑해서 "실제로 호출되는지/리턴이 뭔지/호출 직후 DOM 상태"를 찍기
-const __orig702 = Entry?.Command?.[702]?.do;
-if (typeof __orig702 === "function") {
-  Entry.Command[702].do = function () {
-    bootLine("CALL Command[702].do()", "dim");
-    let ret;
-    try {
-      ret = __orig702.apply(this, arguments);
-      bootLine("RET Command[702] = " + String(ret), "dim");
-    } catch (e) {
-      bootLine("THROW Command[702]: " + String(e?.stack || e), "bad");
-      throw e;
+      bootLine("BOOT OK: renderer_build loaded (Entry.init is inside render.bundle.js)", "ok");
+      hideBootLater(1200);
     }
 
-    // ✅ 0.1초 뒤: 실제로 모달이 생겼는지 DOM 검사
-    setTimeout(() => {
-      const roots = ["entry-lms-root","modal-root","portal-root","toast-root"];
-      for (const id of roots) {
-        const el = document.getElementById(id);
-        bootLine(`ROOT ${id} exists=${!!el} children=${el?.children?.length ?? "N/A"}`, el ? "ok" : "bad");
-      }
+    window.onerror = function(m, s, l, c, e) {
+      bootLine("JS ERROR:", "bad");
+      bootLine(String(e && e.stack ? e.stack : m), "bad");
+    };
 
-      const hits = document.querySelectorAll('[class*="modal"],[class*="popup"],[class*="dialog"],[class*="layer"]');
-      bootLine("FOUND modal-like nodes = " + hits.length, hits.length ? "ok" : "bad");
-      if (hits[0]) {
-        const cs = getComputedStyle(hits[0]);
-        bootLine("FIRST modal display=" + cs.display + " vis=" + cs.visibility + " op=" + cs.opacity, "dim");
-      }
-    }, 120);
-
-    return ret;
-  };
-  bootLine("PATCHED: wrap Command[702].do", "ok");
-} else {
-  bootLine("WARN: Command[702].do not a function at patch time", "bad");
-}
-
-// ✅ 강제 오픈 테스트 (1회)
-
- function patchAddButtons() {
-    try {
-      if (!window.Entry || !Entry.playground || !Entry.Command) return false;
-
-      const btn = Entry.playground._pictureAddButton;
-      if (!btn) return false;
-
-      const run = () => {
-        try { Entry.Command[702].do(); } catch (e) { console.error(e); }
-      };
-
-      // jQuery 객체일 수도, DOM일 수도 있어서 둘 다 처리
-      if (btn.on) {
-        btn.off("click.__force702");
-        btn.on("click.__force702", (e) => { e.preventDefault?.(); e.stopPropagation?.(); run(); });
-      } else if (btn.addEventListener) {
-        btn.addEventListener("click", (e) => { e.preventDefault?.(); e.stopPropagation?.(); run(); }, true);
-      }
-
-      return true;
-    } catch (e) {
-      console.error(e);
-      return false;
-    }
-  }
-
-  // Entry 초기화 직후 약간 기다렸다가 패치
-    const ok = patchAddButtons();
-    if (window.bootLine) bootLine("PATCH pictureAddButton -> Command[702]: " + (ok ? "OK" : "MISS"), ok ? "ok" : "bad");
-      bootLine("BOOT OK: init+loadProject called, hiding logs…", "dim");
-      hideBootLater(2000);
-    }
-function forceUnlockUI() {
-  try {
-    // body lock 해제
-    document.documentElement.style.overflow = "";
-    document.body.style.overflow = "";
-    document.body.style.pointerEvents = "";
-
-    // 화면 덮는 요소들을 pointer-events none 처리(너무 강하면 아래 selector만 좁히세요)
-    const killers = document.querySelectorAll(
-      '.ReactModal__Overlay, .modal, .modal-backdrop, [data-overlay], [class*="overlay"], [class*="backdrop"]'
-    );
-    killers.forEach(n => { n.style.pointerEvents = "none"; });
-
-    bootLine("FORCE UNLOCK UI (debug)", "bad");
-  } catch (e) {
-    bootLine("FORCE UNLOCK failed: " + e, "bad");
-  }
-}
-setTimeout(forceUnlockUI, 1000);
     document.addEventListener("DOMContentLoaded", () => {
       boot().catch(e => {
         bootLine("Boot Error", "bad");
@@ -601,12 +293,15 @@ setTimeout(forceUnlockUI, 1000);
 
 <body>
   <div id="entryContainer"></div>
-  <div id="entry-lms-root"></div>
-<div id="modal-root"></div>
-<div id="portal-root"></div>
-<div id="toast-root"></div>
+
   <div id="boot">Entry Offline Editor
 Made by KKomaProgrammer
 Loading…</div>
+
+  <!-- ✅ entry-lms root들 (render.bundle가 찾는 경우가 있어 미리 만들어 둠) -->
+  <div id="entry-lms-root"></div>
+  <div id="modal-root"></div>
+  <div id="portal-root"></div>
+  <div id="toast-root"></div>
 </body>
 </html>
