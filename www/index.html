@@ -256,14 +256,14 @@ const jsList = [
   // React 먼저
   BASE + "lib/react/umd/react.production.min.js",
   BASE + "lib/react-dom/umd/react-dom.production.min.js",
-
+  BASE + "lib/entryjs/extern/lang/ko.js",
   // entry-lms UI shell 먼저(모달/포털/토스트 루트 사용)
   BASE + "lib/entry-lms/dist/assets/app.js",
 
 
 
   // Entry 엔진 본체는 (네가 쓰는 방식이면) 여기
-  BASE + "lib/entryjs/extern/lang/ko.js",
+
   BASE + "lib/entryjs/extern/util/static.js",
   BASE + "lib/entryjs/extern/util/handle.js",
   BASE + "lib/entryjs/extern/util/bignumber.min.js",
@@ -365,7 +365,7 @@ setTimeout(() => {
     bootLine("UI not mounted (white screen). Keep boot for logs.", "bad");
   }
 }, 2000);
-      fireReadyAgainOnce()
+      //fireReadyAgainOnce()
     }
 
     window.onerror = function(m, s, l, c, e) {
