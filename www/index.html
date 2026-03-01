@@ -68,17 +68,18 @@
         if (el) el.remove();
       }, delayMs);
     }
-function fireReadyAgain() {
+function fireReadyAgainOnce() {
+  if (window.__FIRED_READY_AGAIN__) return;
+  window.__FIRED_READY_AGAIN__ = true;
+
   try {
-    // document DOMContentLoaded “재발사”
     const ev = new Event("DOMContentLoaded", { bubbles: true, cancelable: true });
     document.dispatchEvent(ev);
 
-    // window load도 같이(혹시 load만 듣는 코드가 있을 수 있음)
     const ev2 = new Event("load");
     window.dispatchEvent(ev2);
 
-    bootLine("PATCH: re-fire DOMContentLoaded/load after renderer_build", "ok");
+    bootLine("PATCH: re-fire DOMContentLoaded/load after renderer_build (once)", "ok");
   } catch (e) {
     bootLine("PATCH fireReadyAgain failed: " + e, "bad");
   }
@@ -310,7 +311,7 @@ BASE + "local_backend.js",
       bootLine("BOOT OK: renderer_build loaded (Entry.init is inside render.bundle.js)", "ok");
       bootLine("EARLY CHECK ipcRenderer=" + (typeof window.ipcRenderer), window.ipcRenderer ? "ok" : "bad");
 bootLine("EARLY CHECK require=" + (typeof window.require), window.require ? "ok" : "bad");
-      fireReadyAgain();
+      ;
 
 // 0.5초 후 mount 여부 체크 (아이들 늘어나면 성공)
 setTimeout(() => {
@@ -342,7 +343,7 @@ setTimeout(() => {
     bootLine("UI not mounted (white screen). Keep boot for logs.", "bad");
   }
 }, 2000);
-      
+      fireReadyAgainOnce()
     }
 
     window.onerror = function(m, s, l, c, e) {
@@ -350,12 +351,12 @@ setTimeout(() => {
       bootLine(String(e && e.stack ? e.stack : m), "bad");
     };
 
-    document.addEventListener("DOMContentLoaded", () => {
-      boot().catch(e => {
-        bootLine("Boot Error", "bad");
-        bootLine(String(e && e.stack ? e.stack : e), "bad");
-      });
-    });
+document.addEventListener("DOMContentLoaded", () => {
+  boot().catch(e => {
+    bootLine("Boot Error", "bad");
+    bootLine(String(e && e.stack ? e.stack : e), "bad");
+  });
+}, { once: true });
   </script>
 </head>
 
