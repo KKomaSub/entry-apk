@@ -19,7 +19,19 @@
     .dim{opacity:.85}
     .ok{color:#66ff66}
   </style>
-
+<style>
+  /* ✅ 모달/포탈이 entryContainer 위로 뜨게 보장 */
+  #entry-lms-root, #portal-root, #modal-root, #toast-root{
+    position: fixed;
+    inset: 0;
+    z-index: 2147483647; /* 최상단 */
+    pointer-events: none; /* 루트 자체는 클릭 방해 X */
+  }
+  /* 모달 내용물은 클릭 가능해야 하므로 */
+  #entry-lms-root *, #portal-root *, #modal-root *, #toast-root *{
+    pointer-events: auto;
+  }
+</style>
   <script>
     function bootLineImpl(t, cls="") {
       const el = document.getElementById("boot");
@@ -69,7 +81,28 @@
         return false;
       }
     }
+// ✅ entry-lms root가 비어있으면(=mount 실패) body 끝으로 다시 붙이고 한번 더 이벤트 트리거
+function ensureLmsRootsVisible() {
+  var ids = ["entry-lms-root","portal-root","modal-root","toast-root"];
+  for (var i=0;i<ids.length;i++){
+    var id = ids[i];
+    var el = document.getElementById(id);
+    if (!el) {
+      el = document.createElement("div");
+      el.id = id;
+      document.body.appendChild(el);
+    } else if (el.parentNode !== document.body) {
+      document.body.appendChild(el);
+    }
+  }
 
+  var root = document.getElementById("entry-lms-root");
+  bootLine("ROOT entry-lms-root children=" + (root ? root.children.length : -1), "dim");
+
+  // mount 실패 케이스에서 app.js가 DOMContentLoaded 시점만 보고 끝나는 경우가 있어서, 이벤트 한번 더 줌
+  window.dispatchEvent(new Event("DOMContentLoaded"));
+  window.dispatchEvent(new Event("load"));
+}
     function loadJS(src) {
       return new Promise((resolve) => {
         const s = document.createElement("script");
@@ -250,7 +283,7 @@ const jsList = [
 window.PUBLIC_PATH_FOR_ENTRYJS = "lib/entryjs/dist/";
 Entry.creationChangedEvent = new Entry.Event(window);
       bootLine("Starting Entry.init …", "dim");
-
+setTimeout(ensureLmsRootsVisible, 500);
       Entry.init(document.getElementById("entryContainer"), {
         type: "workspace",
         libDir: "./lib",
