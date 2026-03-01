@@ -68,7 +68,21 @@
         if (el) el.remove();
       }, delayMs);
     }
+function fireReadyAgain() {
+  try {
+    // document DOMContentLoaded “재발사”
+    const ev = new Event("DOMContentLoaded", { bubbles: true, cancelable: true });
+    document.dispatchEvent(ev);
 
+    // window load도 같이(혹시 load만 듣는 코드가 있을 수 있음)
+    const ev2 = new Event("load");
+    window.dispatchEvent(ev2);
+
+    bootLine("PATCH: re-fire DOMContentLoaded/load after renderer_build", "ok");
+  } catch (e) {
+    bootLine("PATCH fireReadyAgain failed: " + e, "bad");
+  }
+}
     // ✅ BASE 자동 탐지 (./, /, /public/, /www/ 중 1개)
     async function probeBase(prefix) {
       const url = prefix + "lib/lodash/dist/lodash.min.js";
@@ -148,7 +162,26 @@
         document.head.appendChild(l);
       });
     }
+function patchReactDomRenderProbe() {
+  try {
+    if (!window.ReactDOM || window.ReactDOM.__PATCHED_RENDER__) return;
+    window.ReactDOM.__PATCHED_RENDER__ = true;
 
+    const orig = window.ReactDOM.render;
+    if (typeof orig !== "function") return;
+
+    window.ReactDOM.render = function (el, container, cb) {
+      try {
+        bootLine("PROBE ReactDOM.render -> " + (container && (container.id || container.className || container.tagName)), "ok");
+      } catch (_) {}
+      return orig.call(this, el, container, cb);
+    };
+
+    bootLine("PATCH: ReactDOM.render probe installed", "dim");
+  } catch (e) {
+    bootLine("PATCH ReactDOM probe failed: " + e, "bad");
+  }
+}
     async function boot() {
       installPathFixers();
 
@@ -265,6 +298,7 @@ BASE + "local_backend.js",
           throw new Error("Required JS missing: " + src);
         }
       }
+      patchReactDomRenderProbe();
 
       // ✅ renderer_build가 죽는지 빠르게 확인 (EntryTool undefined 방지용)
       bootLine("CHECK EntryTool=" + (typeof window.EntryTool), (typeof window.EntryTool !== "undefined") ? "ok" : "bad");
@@ -276,6 +310,17 @@ BASE + "local_backend.js",
       bootLine("BOOT OK: renderer_build loaded (Entry.init is inside render.bundle.js)", "ok");
       bootLine("EARLY CHECK ipcRenderer=" + (typeof window.ipcRenderer), window.ipcRenderer ? "ok" : "bad");
 bootLine("EARLY CHECK require=" + (typeof window.require), window.require ? "ok" : "bad");
+      fireReadyAgain();
+
+// 0.5초 후 mount 여부 체크 (아이들 늘어나면 성공)
+setTimeout(() => {
+  const root = document.getElementById("root");
+  const lms  = document.getElementById("entry-lms-root");
+  const modal= document.getElementById("modal-root");
+  bootLine("AFTER refire root.children=" + (root ? root.children.length : -1), "dim");
+  bootLine("AFTER refire lms.children="  + (lms  ? lms.children.length  : -1), "dim");
+  bootLine("AFTER refire modal.children="+ (modal? modal.children.length: -1), "dim");
+}, 500);
       // renderer_build까지 로드한 직후에 추가
 setTimeout(() => {
   const root = document.getElementById("root");
