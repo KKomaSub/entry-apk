@@ -356,7 +356,13 @@ setTimeout(() => {
 
   bootLine("POSTCHECK ipcRenderer=" + (typeof window.ipcRenderer), window.ipcRenderer ? "ok" : "bad");
   bootLine("POSTCHECK require(electron)=" + (window.require && window.require("electron") ? "ok" : "bad"), "dim");
+     Entry.init(document.getElementById("entryContainer"), {
+        type: "workspace",
+        libDir: "./lib",
+        textCodingEnable: true
+      });
 
+      Entry.loadProject();
   // ✅ 실제 UI가 붙었을 때만 로그 제거
   if (root && root.children.length > 0) {
     bootLine("UI mounted -> hide boot", "ok");
@@ -366,13 +372,7 @@ setTimeout(() => {
   }
 }, 2000);
       //fireReadyAgainOnce()
-           Entry.init(document.getElementById("entryContainer"), {
-        type: "workspace",
-        libDir: "./lib",
-        textCodingEnable: true
-      });
 
-      Entry.loadProject();
     }
 
     window.onerror = function(m, s, l, c, e) {
