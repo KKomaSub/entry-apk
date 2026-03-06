@@ -165,7 +165,21 @@ function fireReadyAgainOnce() {
         document.head.appendChild(s);
       });
     }
+function checkObjectPopup() {
+  const popup = document.getElementById("EntryPopupContainer");
+  bootLine("CHECK #EntryPopupContainer exists=" + !!popup, popup ? "ok" : "bad");
 
+  if (popup) {
+    const cs = getComputedStyle(popup);
+    bootLine(
+      "CHECK #EntryPopupContainer display=" + cs.display +
+      " visibility=" + cs.visibility +
+      " opacity=" + cs.opacity +
+      " children=" + popup.children.length,
+      "dim"
+    );
+  }
+}
     function loadCSS(href) {
       return new Promise((resolve) => {
         const l = document.createElement("link");
@@ -333,8 +347,8 @@ if (window.__PAGE_LOADED_FIRED__ && typeof window.onPageLoaded === "function") {
       bootLine("BOOT OK: renderer_build loaded (Entry.init is inside render.bundle.js)", "ok");
       bootLine("EARLY CHECK ipcRenderer=" + (typeof window.ipcRenderer), window.ipcRenderer ? "ok" : "bad");
 bootLine("EARLY CHECK require=" + (typeof window.require), window.require ? "ok" : "bad");
-      ;
 
+checkObjectPopup()
 // 0.5초 후 mount 여부 체크 (아이들 늘어나면 성공)
 setTimeout(() => {
   const root = document.getElementById("root");
@@ -346,16 +360,8 @@ setTimeout(() => {
 }, 500);
       // renderer_build까지 로드한 직후에 추가
 setTimeout(() => {
-  const root = document.getElementById("root");
-  const lms = document.getElementById("entry-lms-root");
-  const modal = document.getElementById("modal-root");
 
-  bootLine("POSTCHECK root.children=" + (root ? root.children.length : "null"), root && root.children.length ? "ok" : "bad");
-  bootLine("POSTCHECK lms.children=" + (lms ? lms.children.length : "null"), lms && lms.children.length ? "ok" : "dim");
-  bootLine("POSTCHECK modal.children=" + (modal ? modal.children.length : "null"), modal && modal.children.length ? "ok" : "dim");
 
-  bootLine("POSTCHECK ipcRenderer=" + (typeof window.ipcRenderer), window.ipcRenderer ? "ok" : "bad");
-  bootLine("POSTCHECK require(electron)=" + (window.require && window.require("electron") ? "ok" : "bad"), "dim");
      Entry.init(document.getElementById("entryContainer"), {
         type: "workspace",
         libDir: "./lib",
@@ -388,20 +394,10 @@ document.addEventListener("DOMContentLoaded", () => {
     <div id="boot">Entry Offline Editor
 Made by KKomaProgrammer
 Loading…</div>
-  <div class="entrylmsModalCommon"><div></div><div></div><div></div></div>
-  <div class="table-modal" style="display: none;"><div class="editor"> </div></div>
-  <div id="entryToastContainer" class="entryToastContainer"></div>
-  <div id="entryToastContainer" class="entryToastContainer"></div>
-  <div class="entryExtension"><div class="entryDropper" style="display: none;"><div class="dropper"> </div></div></div>
-  <div id="globalSvgSurface" class="globalSvgSurface entryRemove"><svg id="globalSvg" width="1" height="1" version="1.1" xmlns="http://www.w3.org/2000/svg"></svg></div>
-  <span id="entryInputForComputeWidth" class="elem-element">장면 1</span>
-  <div id="EntryPopupContainer" class="modal" style="display: none;"><div class="popup"> </div></div>
+
   <!-- ✅ renderer_build(Entry Offline UI)가 붙는 루트들 -->
   <div id="root"></div>
-  <div id="entry-lms-root"></div>
-  <div id="modal-root"></div>
-  <div id="portal-root"></div>
-  <div id="toast-root"></div>
+
 
   <!-- 기존 Entry 작업영역 -->
   <div id="entryContainer"></div>
