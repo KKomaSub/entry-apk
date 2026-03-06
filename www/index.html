@@ -363,13 +363,8 @@ setTimeout(() => {
       });
 
       Entry.loadProject();
-  // ✅ 실제 UI가 붙었을 때만 로그 제거
-  if (root && root.children.length > 0) {
-    bootLine("UI mounted -> hide boot", "ok");
     hideBootLater(800);
-  } else {
-    bootLine("UI not mounted (white screen). Keep boot for logs.", "bad");
-  }
+
 }, 2000);
       //fireReadyAgainOnce()
 
