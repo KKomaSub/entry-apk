@@ -165,20 +165,14 @@ function fireReadyAgainOnce() {
         document.head.appendChild(s);
       });
     }
-function checkObjectPopup() {
-  const popup = document.getElementById("EntryPopupContainer");
-  bootLine("CHECK #EntryPopupContainer exists=" + !!popup, popup ? "ok" : "bad");
+function checkPopupContainers() {
+  const a = document.getElementById("EntryPopupContainer");
+  const b = document.getElementById("EntryModalContainer");
+  const c = document.getElementById("EntryListContainer");
 
-  if (popup) {
-    const cs = getComputedStyle(popup);
-    bootLine(
-      "CHECK #EntryPopupContainer display=" + cs.display +
-      " visibility=" + cs.visibility +
-      " opacity=" + cs.opacity +
-      " children=" + popup.children.length,
-      "dim"
-    );
-  }
+  bootLine("CHECK Popup=" + !!a + " children=" + (a ? a.children.length : -1), a ? "ok" : "bad");
+  bootLine("CHECK Modal=" + !!b + " children=" + (b ? b.children.length : -1), b ? "ok" : "bad");
+  bootLine("CHECK List=" + !!c + " children=" + (c ? c.children.length : -1), c ? "ok" : "bad");
 }
     function loadCSS(href) {
       return new Promise((resolve) => {
@@ -332,7 +326,7 @@ if (window.__PAGE_LOADED_FIRED__ && typeof window.onPageLoaded === "function") {
       bootLine("EARLY CHECK ipcRenderer=" + (typeof window.ipcRenderer), window.ipcRenderer ? "ok" : "bad");
 bootLine("EARLY CHECK require=" + (typeof window.require), window.require ? "ok" : "bad");
 
-checkObjectPopup()
+checkPopupContainers()
 // 0.5초 후 mount 여부 체크 (아이들 늘어나면 성공)
 setTimeout(() => {
   const root = document.getElementById("root");
@@ -375,16 +369,20 @@ document.addEventListener("DOMContentLoaded", () => {
 </head>
 
 <body>
-    <div id="boot">Entry Offline Editor
+<div id="entryContainer"></div>
+
+<div id="EntryPopupContainer"></div>
+<div id="EntryModalContainer"></div>
+<div id="EntryListContainer" class="modal"></div>
+
+<div id="globalSvgSurface" class="globalSvgSurface entryRemove">
+  <svg id="globalSvg" width="1" height="1" version="1.1" xmlns="http://www.w3.org/2000/svg"></svg>
+</div>
+<span id="entryInputForComputeWidth" class="elem-element">장면 1</span>
+
+<div id="boot">Entry Offline Editor
 Made by KKomaProgrammer
 Loading…</div>
-
-  <!-- ✅ renderer_build(Entry Offline UI)가 붙는 루트들 -->
-  <div id="root"></div>
-
-
-  <!-- 기존 Entry 작업영역 -->
-  <div id="entryContainer"></div>
 
   <!-- 부트 로그 -->
 
