@@ -173,28 +173,71 @@ function fireReadyAgainOnce() {
 
 function wireOpenManagers(popup) {
   const btn = Entry?.playground?._pictureAddButton;
+
+  function openObjectAdd(e) {
+    try {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+
+      if (typeof popup.show === "function") popup.show();
+      if (typeof popup.open === "function") popup.open();
+      if (typeof popup.setData === "function") popup.setData({});
+
+      const c = document.getElementById("popupContainer");
+      if (c) c.style.display = "block";
+
+      bootLine("Popup open called", "ok");
+    } catch (err) {
+      bootLine("Popup open error: " + (err?.stack || err), "bad");
+    }
+  }
+
+  // 1) Command[702]를 직접 popup으로 연결
+  if (Entry?.Command?.[702]?.do) {
+    Entry.Command[702].do = function () {
+      openObjectAdd();
+      return undefined;
+    };
+    bootLine("PATCH Command[702] -> popupContainer", "ok");
+  }
+
+  // 2) 버튼 연결
   if (!btn) {
     bootLine("WARN: _pictureAddButton not found", "bad");
     return;
   }
 
-  const openObjectAdd = () => {
-    try {
-      if (typeof popup.show === "function") popup.show();
-      if (typeof popup.setData === "function") popup.setData({});
-      bootLine("Popup open called", "ok");
-    } catch (e) {
-      bootLine("Popup open error: " + (e?.stack || e), "bad");
-    }
-  };
-
-  if (typeof btn.off === "function") btn.off("click.__popup");
   if (typeof btn.on === "function") {
-    btn.on("click.__popup", openObjectAdd);
-    bootLine("PATCH pictureAddButton -> popupContainer", "ok");
-  } else {
-    bootLine("WARN: pictureAddButton has no .on()", "bad");
+    btn.on("click", openObjectAdd);
+    bootLine("PATCH pictureAddButton .on()", "ok");
+    return;
   }
+
+  if (typeof btn.addEventListener === "function") {
+    btn.addEventListener("click", openObjectAdd);
+    bootLine("PATCH pictureAddButton addEventListener()", "ok");
+    return;
+  }
+
+  if ("onclick" in btn) {
+    btn.onclick = openObjectAdd;
+    bootLine("PATCH pictureAddButton onclick", "ok");
+    return;
+  }
+
+  if (btn.htmlElement && typeof btn.htmlElement.addEventListener === "function") {
+    btn.htmlElement.addEventListener("click", openObjectAdd);
+    bootLine("PATCH pictureAddButton htmlElement.addEventListener()", "ok");
+    return;
+  }
+
+  if (btn._domElement && typeof btn._domElement.addEventListener === "function") {
+    btn._domElement.addEventListener("click", openObjectAdd);
+    bootLine("PATCH pictureAddButton _domElement.addEventListener()", "ok");
+    return;
+  }
+
+  bootLine("WARN: pictureAddButton has no bindable click API", "bad");
 }
 function checkPopupContainers() {
   const a = document.getElementById("EntryPopupContainer");
@@ -345,7 +388,13 @@ if (window.__PAGE_LOADED_FIRED__ && typeof window.onPageLoaded === "function") {
   window.onPageLoaded();
 }
       patchReactDomRenderProbe();
-
+window.__openObjectAdd = function () {
+  try {
+    Entry.Command[702].do();
+  } catch (e) {
+    bootLine("manual open error: " + (e?.stack || e), "bad");
+  }
+};
       // ✅ renderer_build가 죽는지 빠르게 확인 (EntryTool undefined 방지용)
       bootLine("CHECK EntryTool=" + (typeof window.EntryTool), (typeof window.EntryTool !== "undefined") ? "ok" : "bad");
       bootLine("CHECK Entry=" + (typeof window.Entry), (typeof window.Entry !== "undefined") ? "ok" : "bad");
