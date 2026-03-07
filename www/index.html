@@ -340,11 +340,21 @@ setTimeout(() => {
 setTimeout(() => {
 
 
-     Entry.init(document.getElementById("entryContainer"), {
-        type: "workspace",
-        libDir: "./lib",
-        textCodingEnable: true
-      });
+    // Entry.init(document.getElementById("entryContainer"), {
+        //type: "workspace",
+        //libDir: "./lib",
+        //textCodingEnable: true
+      //});
+Entry.init(document.getElementById("entryContainer"), {
+  type: "workspace",
+  libDir: "./lib",
+  objectaddable: true,
+  objectEditable: true,
+  pictureeditable: true,
+  soundeditable: true,
+  sceneEditable: true,
+  textCodingEnable: true
+});
 
       Entry.loadProject();
     hideBootLater(800);
