@@ -165,6 +165,37 @@ function fireReadyAgainOnce() {
         document.head.appendChild(s);
       });
     }
+    function detectPopupCtor() {
+  if (window.EntryTool && window.EntryTool.Popup) return window.EntryTool.Popup;
+  if (window.EntryPopup) return window.EntryPopup;
+  return null;
+}
+
+function wireOpenManagers(popup) {
+  const btn = Entry?.playground?._pictureAddButton;
+  if (!btn) {
+    bootLine("WARN: _pictureAddButton not found", "bad");
+    return;
+  }
+
+  const openObjectAdd = () => {
+    try {
+      if (typeof popup.show === "function") popup.show();
+      if (typeof popup.setData === "function") popup.setData({});
+      bootLine("Popup open called", "ok");
+    } catch (e) {
+      bootLine("Popup open error: " + (e?.stack || e), "bad");
+    }
+  };
+
+  if (typeof btn.off === "function") btn.off("click.__popup");
+  if (typeof btn.on === "function") {
+    btn.on("click.__popup", openObjectAdd);
+    bootLine("PATCH pictureAddButton -> popupContainer", "ok");
+  } else {
+    bootLine("WARN: pictureAddButton has no .on()", "bad");
+  }
+}
 function checkPopupContainers() {
   const a = document.getElementById("EntryPopupContainer");
   const b = document.getElementById("EntryModalContainer");
@@ -355,6 +386,18 @@ Entry.init(document.getElementById("entryContainer"), {
   sceneEditable: true,
   textCodingEnable: true
 });
+  const PopupCtor = detectPopupCtor();
+if (PopupCtor) {
+  const popup = new PopupCtor({
+    container: document.getElementById("popupContainer"),
+    isShow: false,
+    theme: "entry",
+  });
+  wireOpenManagers(popup);
+  bootLine("Popup wiring OK", "ok");
+} else {
+  bootLine("WARN: Popup ctor not found", "bad");
+}
 
       Entry.loadProject();
     hideBootLater(800);
