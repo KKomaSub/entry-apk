@@ -4,9 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Entry Offline Editor</title>
-<script src="./local_backend.js"></script>
   <link rel="stylesheet" href="overrides.css">
-
+<style>
+  #popupContainer{position:fixed;inset:0;z-index:9998;pointer-events:none}
+  #popupContainer *{pointer-events:auto}
+</style>
   <style>
     html,body{margin:0;height:100%;overflow:hidden;background:#111}
     #entryContainer{width:100%;height:100%;background:#f5f5f5}
@@ -35,20 +37,7 @@
     window.__bootLine = bootLineImpl;
     window.__bootline = bootLineImpl;
   </script>
-<script>
-  // ✅ entry-offline renderer가 기대하는 전역 훅 (없으면 바로 크래시)
-  if (typeof window.onPageLoaded !== "function") {
-    window.onPageLoaded = function () {
-      // renderer가 부팅 완료 시점에 호출하려는 훅
-      if (window.bootLine) bootLine("HOOK onPageLoaded()", "dim");
-    };
-  }
-  if (typeof window.onPageUnloaded !== "function") {
-    window.onPageUnloaded = function () {
-      if (window.bootLine) bootLine("HOOK onPageUnloaded()", "dim");
-    };
-  }
-</script>
+
   <!-- drawImage guard (broken png/svg 로 인해 렌더 루프 죽는 것 방지) -->
   <script>
     if (!window.__DRAWIMAGE_GUARD__) {
@@ -383,18 +372,25 @@ const jsList = [
         }
       }
       // jsList 로딩 끝난 직후에 1번만
-if (window.__PAGE_LOADED_FIRED__ && typeof window.onPageLoaded === "function") {
-  bootLine("RECALL onPageLoaded after bundles", "dim");
-  window.onPageLoaded();
-}
+
       patchReactDomRenderProbe();
-window.__openObjectAdd = function () {
+function openObjectAdd(e) {
   try {
-    Entry.Command[702].do();
-  } catch (e) {
-    bootLine("manual open error: " + (e?.stack || e), "bad");
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+
+    if (typeof popup.show === "function") {
+      popup.show({ type: "sprite" });
+    }
+
+    const c = document.getElementById("popupContainer");
+    if (c) c.style.display = "block";
+
+    bootLine("Popup open called", "ok");
+  } catch (err) {
+    bootLine("Popup open error: " + (err?.stack || err), "bad");
   }
-};
+}
       // ✅ renderer_build가 죽는지 빠르게 확인 (EntryTool undefined 방지용)
       bootLine("CHECK EntryTool=" + (typeof window.EntryTool), (typeof window.EntryTool !== "undefined") ? "ok" : "bad");
       bootLine("CHECK Entry=" + (typeof window.Entry), (typeof window.Entry !== "undefined") ? "ok" : "bad");
@@ -472,7 +468,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 <body>
 <div id="entryContainer"></div>
-
+<div id="popupContainer"></div>
 <div id="EntryPopupContainer"></div>
 <div id="EntryModalContainer"></div>
 <div id="EntryListContainer" class="modal"></div>
