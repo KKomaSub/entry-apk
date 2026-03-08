@@ -4,27 +4,40 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Entry Offline Editor</title>
-  <link rel="stylesheet" href="overrides.css">
-<style>
-  #popupContainer{position:fixed;inset:0;z-index:9998;pointer-events:none}
-  #popupContainer *{pointer-events:auto}
-</style>
+
   <style>
-    html,body{margin:0;height:100%;overflow:hidden;background:#111}
-    #entryContainer{width:100%;height:100%;background:#f5f5f5}
-    #boot{
-      position:fixed;inset:0;background:#000;color:#0f0;
-      font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-      padding:12px;white-space:pre-wrap;overflow:auto;z-index:9999
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #f7f7f7;
     }
-    .bad{color:#ff5c5c}
-    .dim{opacity:.85}
-    .ok{color:#66ff66}
+
+    #workspace {
+      width: 100%;
+      height: 100vh;
+      background: #f7f7f7;
+    }
+
+    #boot {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      color: #0f0;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      padding: 12px;
+      white-space: pre-wrap;
+      overflow: auto;
+      z-index: 9999;
+    }
+
+    .bad { color: #ff5c5c; }
+    .dim { opacity: .85; }
+    .ok  { color: #66ff66; }
   </style>
 
-  <!-- boot logger (전역 고정) -->
   <script>
-    function bootLineImpl(t, cls="") {
+    function bootLineImpl(t, cls = "") {
       const el = document.getElementById("boot");
       if (!el) return;
       const d = document.createElement("div");
@@ -33,12 +46,12 @@
       el.appendChild(d);
       el.scrollTop = el.scrollHeight;
     }
+
     window.bootLine = bootLineImpl;
     window.__bootLine = bootLineImpl;
     window.__bootline = bootLineImpl;
   </script>
 
-  <!-- drawImage guard (broken png/svg 로 인해 렌더 루프 죽는 것 방지) -->
   <script>
     if (!window.__DRAWIMAGE_GUARD__) {
       window.__DRAWIMAGE_GUARD__ = true;
@@ -48,12 +61,13 @@
         proto.drawImage = function(img, ...rest) {
           try {
             if (img && img.tagName === "IMG") {
-              const nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
-              if (nw === 0 || nh === 0) return; // broken이면 스킵
+              const nw = img.naturalWidth || 0;
+              const nh = img.naturalHeight || 0;
+              if (nw === 0 || nh === 0) return;
             }
             return _drawImage.call(this, img, ...rest);
           } catch (_) {
-            return; // 무조건 삼킴
+            return;
           }
         };
       }
@@ -61,32 +75,15 @@
   </script>
 
   <script>
-    // 기존 호출 호환용 alias
     const bootLine = (...args) => window.bootLine(...args);
 
-    function hideBootLater(delayMs = 1200) {
+    function hideBootLater(delayMs = 1500) {
       setTimeout(() => {
         const el = document.getElementById("boot");
         if (el) el.remove();
       }, delayMs);
     }
-function fireReadyAgainOnce() {
-  if (window.__FIRED_READY_AGAIN__) return;
-  window.__FIRED_READY_AGAIN__ = true;
 
-  try {
-    const ev = new Event("DOMContentLoaded", { bubbles: true, cancelable: true });
-    document.dispatchEvent(ev);
-
-    const ev2 = new Event("load");
-    window.dispatchEvent(ev2);
-
-    bootLine("PATCH: re-fire DOMContentLoaded/load after renderer_build (once)", "ok");
-  } catch (e) {
-    bootLine("PATCH fireReadyAgain failed: " + e, "bad");
-  }
-}
-    // ✅ BASE 자동 탐지 (./, /, /public/, /www/ 중 1개)
     async function probeBase(prefix) {
       const url = prefix + "lib/lodash/dist/lodash.min.js";
       try {
@@ -97,7 +94,6 @@ function fireReadyAgainOnce() {
       }
     }
 
-    // ✅ /images/... 절대경로를 ./images/... 로 강제 + entry./ 오타 흡수
     function installPathFixers() {
       if (window.__PATH_FIXERS_INSTALLED__) return;
       window.__PATH_FIXERS_INSTALLED__ = true;
@@ -105,17 +101,15 @@ function fireReadyAgainOnce() {
       const fix = (u) => {
         if (typeof u !== "string") return u;
 
-        // ✅ entry./ 오타 경로 교정 (중요: click.mp3 같은 것)
         u = u.replace("/lib/@entrylabs/entry./", "/lib/@entrylabs/entry/");
         u = u.replace("lib/@entrylabs/entry./", "lib/@entrylabs/entry/");
 
-        // ✅ /images/... -> ./images/...
-        if (u.startsWith("/images/")) return "./images/" + u.slice("/images/".length);
-
+        if (u.startsWith("/images/")) {
+          return "./images/" + u.slice("/images/".length);
+        }
         return u;
       };
 
-      // Image.src
       const d = Object.getOwnPropertyDescriptor(Image.prototype, "src");
       if (d && d.set) {
         Object.defineProperty(Image.prototype, "src", {
@@ -124,18 +118,18 @@ function fireReadyAgainOnce() {
         });
       }
 
-      // XHR.open
       const _open = XMLHttpRequest.prototype.open;
       XMLHttpRequest.prototype.open = function(method, url, ...rest) {
         return _open.call(this, method, fix(url), ...rest);
       };
 
-      // fetch
       if (window.fetch) {
         const _fetch = window.fetch.bind(window);
         window.fetch = (input, init) => {
           if (typeof input === "string") return _fetch(fix(input), init);
-          if (input && typeof input.url === "string") return _fetch(new Request(fix(input.url), input), init);
+          if (input && typeof input.url === "string") {
+            return _fetch(new Request(fix(input.url), input), init);
+          }
           return _fetch(input, init);
         };
       }
@@ -148,95 +142,13 @@ function fireReadyAgainOnce() {
         const s = document.createElement("script");
         s.src = src;
         s.defer = false;
-        s.async = false; // ✅ 순서 보장
+        s.async = false;
         s.onload = () => resolve({ ok: true, src });
         s.onerror = () => resolve({ ok: false, src });
         document.head.appendChild(s);
       });
     }
-    function detectPopupCtor() {
-  if (window.EntryTool && window.EntryTool.Popup) return window.EntryTool.Popup;
-  if (window.EntryPopup) return window.EntryPopup;
-  return null;
-}
 
-function wireOpenManagers(popup) {
-  const btn = Entry?.playground?._pictureAddButton;
-
-  function openObjectAdd(e) {
-    try {
-      e?.preventDefault?.();
-      e?.stopPropagation?.();
-
-      if (typeof popup.show === "function") popup.show();
-      if (typeof popup.open === "function") popup.open();
-      if (typeof popup.setData === "function") popup.setData({});
-
-      const c = document.getElementById("popupContainer");
-      if (c) c.style.display = "block";
-
-      bootLine("Popup open called", "ok");
-    } catch (err) {
-      bootLine("Popup open error: " + (err?.stack || err), "bad");
-    }
-  }
-
-  // 1) Command[702]를 직접 popup으로 연결
-  if (Entry?.Command?.[702]?.do) {
-    Entry.Command[702].do = function () {
-      openObjectAdd();
-      return undefined;
-    };
-    bootLine("PATCH Command[702] -> popupContainer", "ok");
-  }
-
-  // 2) 버튼 연결
-  if (!btn) {
-    bootLine("WARN: _pictureAddButton not found", "bad");
-    return;
-  }
-
-  if (typeof btn.on === "function") {
-    btn.on("click", openObjectAdd);
-    bootLine("PATCH pictureAddButton .on()", "ok");
-    return;
-  }
-
-  if (typeof btn.addEventListener === "function") {
-    btn.addEventListener("click", openObjectAdd);
-    bootLine("PATCH pictureAddButton addEventListener()", "ok");
-    return;
-  }
-
-  if ("onclick" in btn) {
-    btn.onclick = openObjectAdd;
-    bootLine("PATCH pictureAddButton onclick", "ok");
-    return;
-  }
-
-  if (btn.htmlElement && typeof btn.htmlElement.addEventListener === "function") {
-    btn.htmlElement.addEventListener("click", openObjectAdd);
-    bootLine("PATCH pictureAddButton htmlElement.addEventListener()", "ok");
-    return;
-  }
-
-  if (btn._domElement && typeof btn._domElement.addEventListener === "function") {
-    btn._domElement.addEventListener("click", openObjectAdd);
-    bootLine("PATCH pictureAddButton _domElement.addEventListener()", "ok");
-    return;
-  }
-
-  bootLine("WARN: pictureAddButton has no bindable click API", "bad");
-}
-function checkPopupContainers() {
-  const a = document.getElementById("EntryPopupContainer");
-  const b = document.getElementById("EntryModalContainer");
-  const c = document.getElementById("EntryListContainer");
-
-  bootLine("CHECK Popup=" + !!a + " children=" + (a ? a.children.length : -1), a ? "ok" : "bad");
-  bootLine("CHECK Modal=" + !!b + " children=" + (b ? b.children.length : -1), b ? "ok" : "bad");
-  bootLine("CHECK List=" + !!c + " children=" + (c ? c.children.length : -1), c ? "ok" : "bad");
-}
     function loadCSS(href) {
       return new Promise((resolve) => {
         const l = document.createElement("link");
@@ -247,26 +159,7 @@ function checkPopupContainers() {
         document.head.appendChild(l);
       });
     }
-function patchReactDomRenderProbe() {
-  try {
-    if (!window.ReactDOM || window.ReactDOM.__PATCHED_RENDER__) return;
-    window.ReactDOM.__PATCHED_RENDER__ = true;
 
-    const orig = window.ReactDOM.render;
-    if (typeof orig !== "function") return;
-
-    window.ReactDOM.render = function (el, container, cb) {
-      try {
-        bootLine("PROBE ReactDOM.render -> " + (container && (container.id || container.className || container.tagName)), "ok");
-      } catch (_) {}
-      return orig.call(this, el, container, cb);
-    };
-
-    bootLine("PATCH: ReactDOM.render probe installed", "dim");
-  } catch (e) {
-    bootLine("PATCH ReactDOM probe failed: " + e, "bad");
-  }
-}
     async function boot() {
       installPathFixers();
 
@@ -274,19 +167,21 @@ function patchReactDomRenderProbe() {
       let BASE = "./";
       for (const c of candidates) {
         bootLine("PROBE BASE: " + c, "dim");
-        if (await probeBase(c)) { BASE = c; break; }
+        if (await probeBase(c)) {
+          BASE = c;
+          break;
+        }
       }
       bootLine("BASE = " + BASE, "ok");
 
-      // ✅ CSS (LMS 먼저 포함)
       const cssList = [
-        BASE + "lib/entry-lms/dist/assets/app.css",
-        BASE + "lib/entry-tool/dist/entry-tool.css",
         BASE + "lib/entryjs/dist/entry.css",
+        BASE + "lib/entry-tool/dist/entry-tool.css",
+        BASE + "lib/entry-lms/dist/assets/app.css",
+        BASE + "lib/modal/dist/entry/entry-modal.css",
         BASE + "lib/codemirror/codemirror.css",
         BASE + "lib/codemirror/addon/hint/show-hint.css",
         BASE + "lib/codemirror/addon/lint/lint.css",
-        BASE + "overrides.css",
       ];
 
       for (const href of cssList) {
@@ -294,62 +189,62 @@ function patchReactDomRenderProbe() {
         bootLine((r.ok ? "OK   CSS  " : "MISS CSS ") + href, r.ok ? "ok" : "bad");
       }
 
-      // ✅ JS 로드 순서 (중요!)
-      // - EntryTool은 renderer_build보다 반드시 먼저
-      // - renderer_build는 맨 마지막 (안에 Entry.init이 이미 있음)
-const jsList = [
-  BASE + "lib/lodash/dist/lodash.min.js",
-  BASE + "lib/jquery/jquery.min.js",
-  BASE + "lib/jquery-ui/ui/minified/jquery-ui.min.js",
-  BASE + "lib/velocity/velocity.min.js",
+      const jsList = [
+        BASE + "lib/entryjs/extern/lang/ko.js",
+        BASE + "lib/entryjs/extern/util/static.js",
 
-  BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
-  BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
-  BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
+        BASE + "lib/lodash/dist/lodash.min.js",
+        BASE + "lib/react/umd/react.production.min.js",
+        BASE + "lib/react-dom/umd/react-dom.production.min.js",
 
-  BASE + "lib/codemirror/codemirror.js",
-  BASE + "lib/codemirror/vim.js",
-  BASE + "lib/codemirror/addon/hint/show-hint.js",
-  BASE + "lib/codemirror/addon/lint/lint.js",
-  BASE + "lib/codemirror/addon/selection/active-line.js",
-  BASE + "lib/codemirror/mode/javascript/javascript.js",
+        BASE + "lib/PreloadJS/lib/preloadjs-0.6.0.min.js",
+        BASE + "lib/EaselJS/lib/easeljs-0.8.0.min.js",
+        BASE + "lib/SoundJS/lib/soundjs-0.6.0.min.js",
+        BASE + "lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js",
 
-  BASE + "js/jshint.js",
-  BASE + "lib/fuzzy/lib/fuzzy.js",
-  BASE + "js/ws/python.js",
+        BASE + "lib/jquery/jquery.min.js",
+        BASE + "lib/jquery-ui/ui/minified/jquery-ui.min.js",
+        BASE + "lib/velocity/velocity.min.js",
 
-  BASE + "lib/react/umd/react.production.min.js",
-  BASE + "lib/react-dom/umd/react-dom.production.min.js",
+        BASE + "lib/codemirror/codemirror.js",
+        BASE + "lib/codemirror/addon/hint/show-hint.js",
+        BASE + "lib/codemirror/addon/lint/lint.js",
+        BASE + "lib/codemirror/addon/selection/active-line.js",
+        BASE + "lib/codemirror/mode/javascript/javascript.js",
 
-  BASE + "lib/entryjs/extern/lang/ko.js",
-  BASE + "lib/entry-lms/dist/assets/app.js",
-  BASE + "lib/entry-tool/dist/entry-tool.js",
+        BASE + "js/jshint.js",
+        BASE + "lib/fuzzy/lib/fuzzy.js",
+        BASE + "js/ws/python.js",
+        BASE + "lib/socket.io-client/socket.io.js",
+        BASE + "lib/components-webfontloader/webfontloader.js",
 
-  BASE + "lib/entryjs/extern/util/static.js",
-  BASE + "lib/entryjs/extern/util/handle.js",
-  BASE + "lib/entryjs/extern/util/bignumber.min.js",
-  BASE + "lib/entryjs/extern/util/filbert.js",
-  BASE + "lib/entryjs/extern/util/CanvasInput.js",
-  BASE + "lib/entryjs/extern/util/ndgmr.Collision.js",
+        BASE + "lib/entry-lms/dist/assets/app.js",
+        BASE + "lib/literallycanvas-mobile/lib/js/literallycanvas.js",
+        BASE + "lib/entry-tool/dist/entry-tool.js",
+        BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
+        BASE + "lib/external/sound/sound-editor.js",
 
-  BASE + "lib/module/legacy-video/index.js",
-  BASE + "lib/external/sound/sound-editor.js",
-  BASE + "lib/entryjs/dist/entry.min.js",
-  BASE + "lib/entry-paint/dist/static/js/entry-paint.js",
-];
+        BASE + "lib/entryjs/extern/util/filbert.js",
+        BASE + "lib/entryjs/extern/util/CanvasInput.js",
+        BASE + "lib/entryjs/extern/util/ndgmr.Collision.js",
+        BASE + "lib/entryjs/extern/util/handle.js",
+        BASE + "lib/entryjs/extern/util/bignumber.min.js",
+
+        BASE + "lib/module/legacy-video/index.js",
+        BASE + "lib/entryjs/dist/entry.min.js",
+        BASE + "lib/modal/dist/entry-modal.js",
+      ];
 
       for (const src of jsList) {
         const optional =
           src.includes("flashaudioplugin") ||
-          src.includes("/vim.js") ||
-          src.includes("/external/sound/sound-editor.js");
+          src.includes("/external/sound/sound-editor.js") ||
+          src.includes("/components-webfontloader/webfontloader.js");
 
         const r = await loadJS(src);
 
-        // sound-editor.js 실패 시 스텁
         if (!r.ok && src.includes("/external/sound/sound-editor.js")) {
           bootLine("MISS(opt) " + src, "dim");
-          bootLine("PATCH EntrySoundEditor: stub applied", "dim");
           if (!window.EntrySoundEditor) {
             window.EntrySoundEditor = {
               renderSoundEditor: function(){},
@@ -358,6 +253,7 @@ const jsList = [
               init: function(){},
             };
           }
+          bootLine("PATCH EntrySoundEditor: stub applied", "dim");
           continue;
         }
 
@@ -366,94 +262,50 @@ const jsList = [
           r.ok ? "ok" : (optional ? "dim" : "bad")
         );
 
-        // 필수 실패 시 즉시 중단(원인 로그 확보)
         if (!r.ok && !optional) {
           throw new Error("Required JS missing: " + src);
         }
       }
-      // jsList 로딩 끝난 직후에 1번만
 
-      patchReactDomRenderProbe();
-function openObjectAdd(e) {
-  try {
-    e?.preventDefault?.();
-    e?.stopPropagation?.();
+      if (window._) {
+        if (typeof _.contains !== "function" && typeof _.includes === "function") {
+          _.contains = _.includes;
+        }
+        if (typeof _.findWhere !== "function") {
+          _.findWhere = function(arr, attrs) {
+            return _.find(arr, function(o) {
+              for (var k in attrs) {
+                if (o[k] !== attrs[k]) return false;
+              }
+              return true;
+            });
+          };
+        }
+      }
 
-    if (typeof popup.show === "function") {
-      popup.show({ type: "sprite" });
-    }
+      bootLine("CHECK EntryTool=" + (typeof window.EntryTool), window.EntryTool ? "ok" : "bad");
+      bootLine("CHECK Entry=" + (typeof window.Entry), window.Entry ? "ok" : "bad");
+      bootLine("CHECK popup=" + !!document.getElementById("EntryPopupContainer"), "dim");
+      bootLine("CHECK modal=" + !!document.getElementById("EntryModalContainer"), "dim");
+      bootLine("CHECK list=" + !!document.getElementById("EntryListContainer"), "dim");
 
-    const c = document.getElementById("popupContainer");
-    if (c) c.style.display = "block";
+      Entry.creationChangedEvent = new Entry.Event(window);
 
-    bootLine("Popup open called", "ok");
-  } catch (err) {
-    bootLine("Popup open error: " + (err?.stack || err), "bad");
-  }
-}
-      // ✅ renderer_build가 죽는지 빠르게 확인 (EntryTool undefined 방지용)
-      bootLine("CHECK EntryTool=" + (typeof window.EntryTool), (typeof window.EntryTool !== "undefined") ? "ok" : "bad");
-      bootLine("CHECK Entry=" + (typeof window.Entry), (typeof window.Entry !== "undefined") ? "ok" : "bad");
-
-      // ✅ 중요: 여기서 Entry.init / Entry.loadProject 절대 호출 금지
-      // renderer_build 내부에서 이미 Entry.init을 수행하고 UI(모달/패널)까지 구성함
-
-      bootLine("BOOT OK: renderer_build loaded (Entry.init is inside render.bundle.js)", "ok");
-      bootLine("EARLY CHECK ipcRenderer=" + (typeof window.ipcRenderer), window.ipcRenderer ? "ok" : "bad");
-bootLine("EARLY CHECK require=" + (typeof window.require), window.require ? "ok" : "bad");
-
-checkPopupContainers()
-// 0.5초 후 mount 여부 체크 (아이들 늘어나면 성공)
-setTimeout(() => {
-  const root = document.getElementById("root");
-  const lms  = document.getElementById("entry-lms-root");
-  const modal= document.getElementById("modal-root");
-  bootLine("AFTER refire root.children=" + (root ? root.children.length : -1), "dim");
-  bootLine("AFTER refire lms.children="  + (lms  ? lms.children.length  : -1), "dim");
-  bootLine("AFTER refire modal.children="+ (modal? modal.children.length: -1), "dim");
-}, 500);
-      // renderer_build까지 로드한 직후에 추가
-setTimeout(() => {
-bootLine("CHECK creationChangedEvent=" + !!Entry.creationChangedEvent, "dim");
-bootLine("CHECK popup=" + !!document.getElementById("EntryPopupContainer"), "dim");
-bootLine("CHECK modal=" + !!document.getElementById("EntryModalContainer"), "dim");
-bootLine("CHECK list=" + !!document.getElementById("EntryListContainer"), "dim");
-
-    // Entry.init(document.getElementById("entryContainer"), {
-        //type: "workspace",
-        //libDir: "./lib",
-        //textCodingEnable: true
-      //});
-  Entry.creationChangedEvent = new Entry.Event(window) ;
-Entry.init(document.getElementById("workspace"), {
-  type: "workspace",
-  libDir: "./lib",
-  objectaddable: true,
-  objectEditable: true,
-  pictureeditable: true,
-  soundeditable: true,
-  sceneEditable: true,
-  textCodingEnable: true
-});
-  const PopupCtor = detectPopupCtor();
-if (PopupCtor) {
-  const popup = new PopupCtor({
-    container: document.getElementById("popupContainer"),
-    isShow: false,
-    theme: "entry",
-  });
-  wireOpenManagers(popup);
-  bootLine("Popup wiring OK", "ok");
-} else {
-  bootLine("WARN: Popup ctor not found", "bad");
-}
+      Entry.init(document.getElementById("workspace"), {
+        type: "workspace",
+        libDir: "./lib",
+        objectaddable: true,
+        objectEditable: true,
+        pictureeditable: true,
+        soundeditable: true,
+        sceneEditable: true,
+        textCodingEnable: true
+      });
 
       Entry.loadProject();
-    hideBootLater(800);
 
-}, 2000);
-      //fireReadyAgainOnce()
-
+      bootLine("BOOT OK: Entry.init + Entry.loadProject()", "ok");
+      hideBootLater(1500);
     }
 
     window.onerror = function(m, s, l, c, e) {
@@ -461,12 +313,17 @@ if (PopupCtor) {
       bootLine(String(e && e.stack ? e.stack : m), "bad");
     };
 
-document.addEventListener("DOMContentLoaded", () => {
-  boot().catch(e => {
-    bootLine("Boot Error", "bad");
-    bootLine(String(e && e.stack ? e.stack : e), "bad");
-  });
-}, { once: true });
+    window.onunhandledrejection = function(e) {
+      bootLine("PROMISE ERROR:", "bad");
+      bootLine(String(e && e.reason && e.reason.stack ? e.reason.stack : e.reason), "bad");
+    };
+
+    document.addEventListener("DOMContentLoaded", () => {
+      boot().catch(e => {
+        bootLine("Boot Error", "bad");
+        bootLine(String(e && e.stack ? e.stack : e), "bad");
+      });
+    }, { once: true });
   </script>
 </head>
 
@@ -476,11 +333,8 @@ document.addEventListener("DOMContentLoaded", () => {
   <div id="EntryModalContainer"></div>
   <div id="EntryListContainer" class="modal"></div>
 
-<div id="boot">Entry Offline Editor
+  <div id="boot">Entry Offline Editor
 Made by KKomaProgrammer
 Loading…</div>
-
-  <!-- 부트 로그 -->
-
 </body>
 </html>
