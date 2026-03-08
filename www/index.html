@@ -414,14 +414,18 @@ setTimeout(() => {
 }, 500);
       // renderer_build까지 로드한 직후에 추가
 setTimeout(() => {
-
+bootLine("CHECK creationChangedEvent=" + !!Entry.creationChangedEvent, "dim");
+bootLine("CHECK popup=" + !!document.getElementById("EntryPopupContainer"), "dim");
+bootLine("CHECK modal=" + !!document.getElementById("EntryModalContainer"), "dim");
+bootLine("CHECK list=" + !!document.getElementById("EntryListContainer"), "dim");
 
     // Entry.init(document.getElementById("entryContainer"), {
         //type: "workspace",
         //libDir: "./lib",
         //textCodingEnable: true
       //});
-Entry.init(document.getElementById("entryContainer"), {
+  Entry.creationChangedEvent = new Entry.Event(window) ;
+Entry.init(document.getElementById("workspace"), {
   type: "workspace",
   libDir: "./lib",
   objectaddable: true,
@@ -467,16 +471,10 @@ document.addEventListener("DOMContentLoaded", () => {
 </head>
 
 <body>
-<div id="entryContainer"></div>
-<div id="popupContainer"></div>
-<div id="EntryPopupContainer"></div>
-<div id="EntryModalContainer"></div>
-<div id="EntryListContainer" class="modal"></div>
-
-<div id="globalSvgSurface" class="globalSvgSurface entryRemove">
-  <svg id="globalSvg" width="1" height="1" version="1.1" xmlns="http://www.w3.org/2000/svg"></svg>
-</div>
-<span id="entryInputForComputeWidth" class="elem-element">장면 1</span>
+  <div id="workspace"></div>
+  <div id="EntryPopupContainer"></div>
+  <div id="EntryModalContainer"></div>
+  <div id="EntryListContainer" class="modal"></div>
 
 <div id="boot">Entry Offline Editor
 Made by KKomaProgrammer
