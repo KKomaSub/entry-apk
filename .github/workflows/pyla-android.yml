@@ -25,6 +25,7 @@ jobs:
           mkdir -p pyla-project
           tar -xzf /tmp/pyla.tar.gz -C pyla-project
           test -f pyla-project/app/build.gradle.kts
+          sed -i 's/compileSdk = 37/compileSdk = 36/g; s/targetSdk = 37/targetSdk = 36/g' pyla-project/app/build.gradle.kts pyla-project/core-runtime/build.gradle.kts pyla-project/core-vision/build.gradle.kts
 
       - uses: actions/setup-java@v5
         with:
@@ -37,7 +38,7 @@ jobs:
           set -euxo pipefail
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-37" "build-tools;36.0.0" "platform-tools"
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
