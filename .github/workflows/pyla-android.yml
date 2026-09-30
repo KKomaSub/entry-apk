@@ -1,0 +1,62 @@
+name: PylaAI Android APK
+
+on:
+  push:
+    branches: [ "pyla-android" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct Android project
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat pyla-build/src.* > /tmp/pyla.b64
+          base64 -d /tmp/pyla.b64 > /tmp/pyla.tar.gz
+          mkdir -p pyla-project
+          tar -xzf /tmp/pyla.tar.gz -C pyla-project
+          test -f pyla-project/app/build.gradle.kts
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-37" "build-tools;36.0.0" "platform-tools"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+
+      - name: Fetch pinned PylaAI models and templates
+        working-directory: pyla-project
+        run: python3 scripts/fetch_upstream_assets.py
+
+      - name: Build debug APK
+        working-directory: pyla-project
+        run: gradle --no-daemon :app:assembleDebug --stacktrace
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          test -s pyla-project/app/build/outputs/apk/debug/app-debug.apk
+          ls -lh pyla-project/app/build/outputs/apk/debug/app-debug.apk
+          unzip -t pyla-project/app/build/outputs/apk/debug/app-debug.apk >/dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PylaAI-Android-debug
+          path: pyla-project/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
