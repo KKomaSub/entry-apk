@@ -26,7 +26,7 @@ jobs:
           tar -xzf /tmp/pyla.tar.gz -C pyla-project
           test -f pyla-project/app/build.gradle.kts
           sed -i 's/version "9.4.0"/version "8.7.3"/g; s/version "2.4.10"/version "2.0.21"/g' pyla-project/build.gradle.kts
-          sed -i 's/compileSdk = 37/compileSdk = 35/g; s/targetSdk = 37/targetSdk = 35/g' pyla-project/app/build.gradle.kts pyla-project/core-runtime/build.gradle.kts pyla-project/core-vision/build.gradle.kts
+          sed -i 's/compileSdk = 37/compileSdk = 35/g; s/targetSdk = 37/targetSdk = 35/g; s/androidx.core:core-ktx:1.17.0/androidx.core:core-ktx:1.15.0/g' pyla-project/app/build.gradle.kts pyla-project/core-runtime/build.gradle.kts pyla-project/core-vision/build.gradle.kts
 
       - uses: actions/setup-java@v5
         with:
