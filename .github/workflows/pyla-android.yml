@@ -16,8 +16,9 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          cat pyla-build/src.* > /tmp/pyla.b64
+          cat pyla-build/src.00 pyla-build/f01.0 pyla-build/f01.1 pyla-build/f01.2 pyla-build/f02.0 pyla-build/f02.1 pyla-build/f02.2 pyla-build/src.03 > /tmp/pyla.b64
           base64 -d /tmp/pyla.b64 > /tmp/pyla.tar.gz
+          gzip -t /tmp/pyla.tar.gz
           mkdir -p pyla-project
           tar -xzf /tmp/pyla.tar.gz -C pyla-project
           test -f pyla-project/app/build.gradle.kts
